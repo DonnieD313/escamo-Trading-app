@@ -24,19 +24,27 @@ Then open **http://127.0.0.1:8090** in a browser.
 - **Accounts:** sign up / log in with a username and password. Passwords are
   hashed with PBKDF2 (salted) — never stored in plain text. No email needed.
 - **Joining:** signup is two steps. Step 1: username, password, optional
-  invite code, and the **tribe you want to join — Blues, Browns, or Reds**
-  (Blacks are not a starter tribe; they are the rare Miners, found only
-  through the weekly sale). Step 2: **choose your free hoodie baby** from
-  your tribe's starter roster (Blues: Marina, Coral, Pearl, Tide, Kai;
-  Browns: Willow, Fern, Hazel, Rowan, Ivy, Maple, Juniper, Sage; Reds:
-  Ember, Storm, Skye, Ash, Blaze, Aurora, Cinder, Tempest) and **name it
+  invite code, and the **tribe you want to join — Waterliewaveminans
+  (Blues), Fortress Rooted (Browns), or Windyworrors (Reds)**
+  (Shadows are not a starter tribe; they are the protectors, found
+  through pop-ups in the Shop). Step 2: **choose your free hoodie baby**
+  from your tribe's starter roster (Waterliewaveminans: Marina, Coral,
+  Pearl, Tide, Kai; Fortress Rooted: Willow, Fern, Hazel, Rowan, Ivy,
+  Maple, Juniper, Sage; Windyworrors: Ember, Storm, Skye, Ash, Blaze,
+  Aurora, Cinder, Tempest) and **name it
   yourself** — the name field starts prefilled with the roster name and
   can be overwritten (blank keeps the roster name, max 40 characters).
   The account is created only at the end of step 2, so abandoning step 2
   creates nothing; unfinished signups expire after 30 minutes. Every new
   account gets that one free baby (a unique, 1-of-1 baby with its own
   certificate number, tribe, hoodie pattern, and rhinestone colors) and
-  **300 points**. Existing accounts keep the free baby they already got.
+  **600 points**. Existing accounts keep the free baby they already got
+  and their existing point balance.
+- **Villages:** every player has a village. Every baby owned counts
+  toward it except leaders — villagers, drifters, specials, rares,
+  Shadows, and gods all count. A village is complete at **40** babies.
+  "My Collection" shows **My Village: X / 40** (and "Village
+  complete!" at 40), plus any leader owned alongside the village.
 - **Collections:** "My Collection" shows your babies. You can put any baby up
   for trade (or take it down) from there.
 - **Trading:** on the Trade Board you browse other users' babies marked for
@@ -51,24 +59,41 @@ Then open **http://127.0.0.1:8090** in a browser.
   hoodie pattern, rhinestone colors) from "My Collection".
 - **Invites:** every user has an 8-character invite code shown on
   "My Collection". Share a link shaped like
-  `/signup?invite=YOURCODE` — signing up through it records who invited them.
-- **World page:** the tribes and leaders as specified — Blues, rulers over
-  water, led by Damiana June (Controller of Water, blue slanted eyes,
-  fish-like face with a surprised crying look, rare, purchasable when live);
-  the Blues run the sea and have only five characters, not including her
-  (Marina, Coral, Pearl, Tide, Kai — sea and ocean names); Browns, rulers
-  of the forest, led by Aaliyah Bee (red stone in the middle of her
-  forehead, keeper of the woods and animals, animal-looking grouchy face);
-  Reds, led by Jazmyn, ruler of the sky, more powerful than the other
-  controllers (glowing diamond head, black eyes, all-black hoodie with stones
-  of every different color, hoodie over her face, wand with a fire-red tip,
-  angel-looking face with a slight curious smile — Jazmyn is the elder of
-  them all, the first hoodie baby to arrive); Blacks ARE the Miners (no
-  ruler, scavengers, underground-raised, they pop up out of anywhere, mean
-  no harm, protectors out to get what they can to go back underground,
-  Diamond eyes, all-white hoodies with black stones, angry creature-like
-  faces). Faces: Blues fish-like, Browns animal-like, Reds angel-like,
-  Blacks angry creature-like.
+  `/signup?invite=YOURCODE` — signing up through it records who invited them,
+  and when the invited friend completes signup the inviter gets
+  **+20 points** (balance and earned — invite bonuses are earned, not
+  bought). "My Collection" shows the private line "Invite bonus: +20
+  points × N invites" on the inviter's own page only.
+- **World page:** the tribes and leaders as specified —
+  Waterliewaveminans, rulers over water, led by Damiana June (Controller
+  of Water, blue slanted eyes, fish-like face with a surprised crying
+  look, rare, purchasable when live); the Waterliewaveminans run the sea
+  and have only five characters, not including her (Marina, Coral, Pearl,
+  Tide, Kai — sea and ocean names); Fortress Rooted, rulers of the
+  forest, led by Aaliyah Bee (red stone in the middle of her forehead,
+  keeper of the woods and animals, animal-looking grouchy face);
+  Windyworrors, led by Jazmyn, ruler of the sky, more powerful than the
+  other controllers (glowing diamond head, black eyes, all-black hoodie
+  with stones of every different color, hoodie over her face, wand with a
+  fire-red tip, angel-looking face with a slight curious smile — Jazmyn
+  is the elder of them all, the first hoodie baby to arrive); Shadows ARE
+  the protectors (no ruler, underground-raised, they pop up out of
+  anywhere, mean no harm, Diamond eyes, all-white hoodies with black
+  stones, angry creature-like faces). Faces: Waterliewaveminans
+  fish-like, Fortress Rooted animal-like, Windyworrors angel-like,
+  Shadows angry creature-like. Tribe colors stay the same; only the
+  names changed (internal tribe keys Blues/Browns/Reds/Blacks are
+  unchanged in the database).
+- **Stones on every hoodie:** gods' hoodies carry **15** rhinestones,
+  leaders' hoodies carry **10**, every villager's hoodie carries **5**
+  (drifters, specials, rares, and Shadows included). The counts show on
+  cards, in descriptions, and as stone dots in SVG portraits. Colors
+  are unchanged. Realistic photos cannot be re-counted and are left
+  as-is.
+- **Physical figures:** every page carries a small-print (but legible)
+  footer: the original Hoodie Babies figure will not be released until
+  further notice — but actual, physical Hoodie Babies are coming.
+  Nothing is set in stone yet (no date is promised).
 - **Prices:** leaders **$10.00** to purchase, and everyone is free to
   purchase a leader. Individual characters **$1.99** to purchase. Gods
   **$40.00** to purchase — there are only 3 gods, over everyone, and
@@ -82,7 +107,7 @@ Then open **http://127.0.0.1:8090** in a browser.
 - **Shop + checkout (PayPal and Cash App Pay, test modes):** the Shop
   page sells individual characters for **$1.99** each, leaders for
   **$10.00** each, god slots for **$40.00** each, and points packs
-  (**300 for $1.99, 600 for $3.99, 900 for $9.99, 1,200 for $20.00**)
+  (**300 for $4.99, 600 for $9.99, 1,200 for $20.00** — no 900 pack)
   through PayPal or through Cash App Pay (via Stripe Checkout). A
   logged-in user buys, pays, and is sent back — only a successful
   capture (PayPal) or a verified paid session (Stripe) grants the
@@ -98,22 +123,18 @@ Then open **http://127.0.0.1:8090** in a browser.
   **balance only** — they
   never raise points_earned, so bought points do not unlock the
   character creator, which stays trade-earned only.
-- **Blacks / weekly sale:** once a week, one Black pops up for sale on the
-  Trade Board (owned by the system "underground" account, rotating weekly
-  so only the current week's Black is listed). Trading for a Black starts
-  at **1,200 points**: an offer targeting a Black is refused unless the
-  offerer holds at least 1,200 points (enforced when the offer is sent and
-  again at acceptance). **Auto-accept rule (Doneil's decision):** the
-  Underground auto-accepts the first qualifying offer immediately — the
-  buyer receives the Black, the offered baby (if any) and offered points
-  go to the Underground, the Black leaves the Trade Board, other pending
-  offers touching that Black are withdrawn, and a notice is appended to
-  the Notices board saying the Black was caught and by whom. No Black
-  sale price is set; the offer's own contents are what the buyer gives.
-  **Trading for a Black is worth 60 points** to the buyer (not the usual
-  20); the Underground system account earns nothing. Normal trades
+- **Shadows / weekly pop-up + player trades:** once a week, one Shadow
+  pops up in the Shop as a **$10.00** money purchase (PayPal or Cash App
+  Pay, like any shop buy). This replaces the old Underground points-offer
+  listing on the Trade Board. Trading for a Shadow **between players**
+  still starts at **1,200 points**: an offer targeting a Shadow is
+  refused unless the offerer holds at least 1,200 points (enforced when
+  the offer is sent and again at acceptance), and goes through the
+  normal accept / decline / counter flow. **Trading for a Shadow is
+  worth 60 points** to the buyer (not the usual 20). Normal trades
   between two users stay at 20 points each.
-  Once the Black is gone, later offers against it fail cleanly.
+  Once a traded Shadow leaves the board, later offers against it fail
+  cleanly.
 - **Collections + notices:** the current babies are the First Beginnings.
   Summer, Fall, and Winter collections are coming. A Notices board lists
   every addition with where it was found (seeded with the founders and the
@@ -141,14 +162,21 @@ Then open **http://127.0.0.1:8090** in a browser.
   from the starter rosters and names it (same pick-and-name pattern as
   signup step 2). Unclaimed milestones stay visible on Home and in the
   Shop and can be claimed later — they are never lost.
-- **Pop-up new colors:** each week one new color variant (a new
-  pattern + rhinestone combination on an existing tribe) appears in the
-  Shop as a limited pop-up purchase at $1.99, plus a notice on the
-  Notices board saying what popped up and where it was found (Blues by
-  the sea, Browns in the woods, Reds in the sky). Only the current
-  week's pop-up is listed. No new tribe names were invented: the
+- **Pop-up tiers:** each week four pop-up listings appear in the Shop,
+  each a new color variant on an existing tribe, each with a notice on
+  the Notices board saying what popped up and where it was found
+  (Waterliewaveminans by the sea, Fortress Rooted in the woods,
+  Windyworrors in the sky). Only the current week's listings are shown;
+  a sold-out listing disappears. No new tribe names were invented: the
   rotation reads the starter-tribe data, so a tribe added there later
   joins the rotation automatically.
+  - **Drifter** — the regular weekly pop-up, **$1.99**, one copy.
+  - **Special** — **$4.99**, a limited edition of **25** copies
+    (Doneil said 20 to 30 found; 25 is the midpoint default).
+  - **Rare** — **$9.99**, a limited edition of **8** copies
+    (Doneil said 5 to 10 found; 8 is inside the range).
+  - **Shadow** — **$10.00**, one copy (see "Shadows" above).
+  Every pop-up baby counts toward its owner's village.
 - **Tribe ownership:** buying a tribe's leader makes the buyer the Owner
   of that tribe — Damiana June owns the Blues, Aaliyah Bee owns the
   Browns, Jazmyn owns the Reds. The Owner title shows on the World page
@@ -157,15 +185,32 @@ Then open **http://127.0.0.1:8090** in a browser.
   the trade-slot perk). 2nd and 3rd places per tribe are the two users
   other than the owner holding the most babies of that tribe (ties
   broken by username) — titles only, no extra perks.
-- **Gender:** leaders are female, Blacks and gods are male, every other
+- **Gender:** leaders are female, Shadows and gods are male, every other
   baby has no gender marker — shown as a small ♂/♀ marker on cards
   where it applies. No inference from hoodie colors. Existing babies
   are corrected to this rule on startup. Leaders are not relabeled as
   queens/kings beyond the ownership titles.
+- **Baby detail viewer (`/baby/<cert>`):** every baby card (collection,
+  Trade Board, Shop, pop-ups, leaders, gods) links to a detail page,
+  and the purchase-confirmation page links to "View your baby". The
+  page shows the baby large, with a fullscreen overlay (tap to blow it
+  up; native pinch-to-zoom on phone/tablet plus +/− buttons) and a
+  drag-to-spin viewer. Honest limit: each baby has one photo today, so
+  the spin has two views — the front photo (or SVG portrait) and a
+  "Back view — details" card (hoodie pattern, stone colors and count,
+  tribe, certificate), clearly labeled as a details card, not a photo.
+  Views are a list, so real side/back photos can be added later
+  without rework. No AI-generated angles: they would not match the
+  front exactly and would misrepresent a 1-of-1 baby. The page also
+  carries the "Make it real" note: when physical figures launch, the
+  exact character (pattern, stones, colors, certificate) can be sent
+  in to be made real, exactly as it appears online. No ordering,
+  payment, or manufacturing flow — figures are not released yet.
 - **Defaults Doneil can correct:** the 25%/50% deal split and 4-pick
   shelf; the 1-purchase monthly-gift threshold; choice babies counting
-  all completed shop purchases (including points packs); the pop-up
-  price ($1.99).
+  all completed shop purchases (including points packs); the special
+  edition size (25) and rare edition size (8); the village size (40
+  non-leader babies); the Shadow pop-up price ($10.00).
 
 ## Test: two users completing a trade end-to-end
 
@@ -176,38 +221,40 @@ cd ~/workspace/escamo-trading-app
 python3 test_trade.py
 ```
 
-It verifies: Alice and Bob sign up (Bob via Alice's invite code), each gets
-1 free baby + 300 points, Bob puts his baby up for trade, Alice offers her
-baby + 10 points for it, Bob accepts — and afterward Alice owns Bob's old
-baby, Bob owns Alice's old baby, both babies leave the trade board,
-Alice has 310 points (300 − 10 + 20), Bob has 330 (300 + 10 + 20), each has
-20 points earned, and the creator is still locked at 20/300. It also
-verifies the new spec: the World page shows leader $10.00, individual
-$1.99, god $40.00, the 3 gods, five Blues characters, fish-like /
-animal-like / angel-like faces, and Blacks as the Miners with Diamond eyes;
-the Trade Board lists the weekly Black with the 1,200-point gate; a Black
-offer below 1,200 points is refused with no pending offer created, while
-one at 1,500 points is immediately auto-accepted by the Underground (buyer
-owns the Black, offered baby and points move to the Underground, a catch
-notice is recorded), and a second offer against the same Black fails
-cleanly; and the Notices board lists arrivals. It then runs two mocked
-PayPal shop servers (no real credentials, no network calls to PayPal):
-a successful capture grants the listed $1.99 baby and records the
-purchase as completed, and a failed capture grants nothing and leaves
-the shop item unsold. Finally it runs two mocked Stripe shop servers
-(no real keys, no network calls to Stripe): a paid Cash App Pay session
-grants the listed $1.99 baby and records the purchase as completed,
-while an unpaid session and a cancelled session each grant nothing and
-leave the shop item unsold. It then verifies the leader/god/points
-rules on mocked servers: a $10.00 leader purchase (buyer's choice of
-the 3 leaders) grants the leader baby and marks it sold, a sold-out
+It verifies: Alice and Bob sign up (Bob via Alice's invite code, so Alice
+gets the +20 invite bonus), each gets 1 free baby + 600 points, Bob puts
+his baby up for trade, Alice offers her baby + 10 points for it, Bob
+accepts — and afterward Alice owns Bob's old baby, Bob owns Alice's old
+baby, both babies leave the trade board, Alice has 630 points (600 + 20
+invite − 10 + 20), Bob has 630 (600 + 10 + 20), Alice has 40 points
+earned and Bob 20, and the creator is still locked. It also verifies
+the new spec: the World page shows leader $10.00, individual $1.99, god
+$40.00, the 3 gods, five Waterliewaveminans characters, fish-like /
+animal-like / angel-like faces, and Shadows as the protectors with
+Diamond eyes; a player-listed Shadow on the Trade Board carries the
+1,200-point gate; a Shadow offer below 1,200 points is refused with no
+pending offer created, while one at 1,500 points goes pending and, once
+accepted, gives the buyer the Shadow plus 60 points, and a second offer
+against the same Shadow fails cleanly; no user-facing page still shows
+"Blacks" as a tribe name; and the Notices board lists arrivals. It then
+runs two mocked PayPal shop servers (no real credentials, no network
+calls to PayPal): a successful capture grants the listed $1.99 baby and
+records the purchase as completed, and a failed capture grants nothing
+and leaves the shop item unsold. Finally it runs two mocked Stripe shop
+servers (no real keys, no network calls to Stripe): a paid Cash App Pay
+session grants the listed $1.99 baby and records the purchase as
+completed, while an unpaid session and a cancelled session each grant
+nothing and leave the shop item unsold. It then verifies the leader/god/
+points rules on mocked servers: a $10.00 leader purchase (buyer's choice
+of the 3 leaders) grants the leader baby and marks it sold, a sold-out
 leader cannot be bought by anyone else, a failed leader capture grants
 nothing; a $40.00 god purchase grants a god slot baby; the trade-slot
 caps hold (regular 1, leader owner 2, god owner 5 pending offers, with
 the cap dropping when the leader is traded away); and points packs
-(600 via PayPal, 1,200 via Cash App Pay) raise the balance only, never
-points_earned, so the creator stays locked — while failed/unpaid packs
-grant nothing. Finally it verifies hardening on dedicated instances:
+(300 for $4.99 via PayPal, 600 for $9.99 and 1,200 for $20.00 via Cash App
+Pay) raise the balance only, never points_earned, so the creator stays
+locked — while failed/unpaid packs grant nothing and the removed 900
+pack is refused. Finally it verifies hardening on dedicated instances:
 POSTs without a CSRF token (or with a wrong one) are rejected with
 403 and create nothing, the CSRF cookie carries the Secure flag when
 `COOKIE_SECURE=1`, an 8-day-old session no longer logs in while a

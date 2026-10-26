@@ -184,6 +184,45 @@ def main():
     svg_god2 = escamo_app.portrait_svg(god2)
     check("god portraits have crowns and differ per god",
           "42,30 48,19" in svg_god1 and svg_god1 != svg_god2)
+    # Stone counts in SVG portraits: gods 15, leaders 10, villagers 5.
+    # Stones are the only 7x7 rects in a portrait, so counting them is
+    # exact.
+    def stone_dots(svg):
+        return svg.count("width='7' height='7'")
+    check("villager portrait has exactly 5 stones",
+          stone_dots(svg_blue) == 5, "got %d" % stone_dots(svg_blue))
+    check("leader portrait has exactly 10 stones",
+          stone_dots(escamo_app.portrait_svg(damiana)) == 10,
+          "got %d" % stone_dots(escamo_app.portrait_svg(damiana)))
+    check("god portrait has exactly 15 stones",
+          stone_dots(svg_god1) == 15, "got %d" % stone_dots(svg_god1))
+    check("Shadow portrait has exactly 5 stones",
+          stone_dots(escamo_app.portrait_svg(black)) == 5,
+          "got %d" % stone_dots(escamo_app.portrait_svg(black)))
+    # Stone counts in card text, and tribe display names on cards.
+    full_blue = dict(blue, is_custom=0, for_trade=0, gender=None)
+    full_damiana = dict(damiana, is_custom=0, for_trade=0,
+                        gender="female")
+    full_god = dict(god1, is_custom=0, for_trade=0, gender="male")
+    check("villager card shows Stones: 5",
+          "Stones: 5" in escamo_app.baby_card(full_blue))
+    check("leader card shows Stones: 10",
+          "Stones: 10" in escamo_app.baby_card(full_damiana))
+    check("god card shows Stones: 15",
+          "Stones: 15" in escamo_app.baby_card(full_god))
+    check("card shows Waterliewaveminans, not Blues",
+          "Waterliewaveminans" in escamo_app.baby_card(full_blue)
+          and ">Blues<" not in escamo_app.baby_card(full_blue))
+    check("card shows Shadows, not Blacks",
+          "Shadows" in escamo_app.baby_card(
+              dict(black, is_custom=0, for_trade=0, gender="male"))
+          and "Blacks" not in escamo_app.baby_card(
+              dict(black, is_custom=0, for_trade=0, gender="male")))
+    check("tribe display map uses Doneil's spellings",
+          escamo_app.tribe_display("Blues") == "Waterliewaveminans"
+          and escamo_app.tribe_display("Browns") == "Fortress Rooted"
+          and escamo_app.tribe_display("Reds") == "Windyworrors"
+          and escamo_app.tribe_display("Blacks") == "Shadows")
     svg_evil = escamo_app.portrait_svg(evil)
     check("portrait escapes baby names",
           "<script>" not in svg_evil and "&lt;script&gt;" in svg_evil)
@@ -287,14 +326,32 @@ def main():
             "SELECT * FROM users WHERE username='bob'").fetchone()
         check("bob's invited_by is alice",
               bob_row["invited_by"] == alice_row["id"])
-        # 3. Both got one free baby + 300 points
+        # 3. Both got one free baby + 600 points; Alice also has the
+        # +20 invite bonus from Bob signing up with her code (balance
+        # and earned). Starting points never count toward the creator.
         for name, row in (("alice", alice_row), ("bob", bob_row)):
             babies = con.execute(
                 "SELECT * FROM babies WHERE owner_id=?",
                 (row["id"],)).fetchall()
             check("%s starts with 1 free baby" % name, len(babies) == 1,
                   "got %d" % len(babies))
-            check("%s starts with 300 points" % name, row["points"] == 300)
+        a_start = con.execute(
+            "SELECT * FROM users WHERE username='alice'").fetchone()
+        b_start = con.execute(
+            "SELECT * FROM users WHERE username='bob'").fetchone()
+        check("alice starts with 620 points (600 + 20 invite bonus)",
+              a_start["points"] == 620, "got %d" % a_start["points"])
+        check("alice invite bonus counts as earned",
+              a_start["points_earned"] == 20,
+              "got %d" % a_start["points_earned"])
+        check("bob starts with 600 points", b_start["points"] == 600,
+              "got %d" % b_start["points"])
+        check("bob starts with 0 earned", b_start["points_earned"] == 0)
+        s, alice_me = get(alice, "/me")
+        check("alice collection shows invite bonus line",
+              "Invite bonus: +20 points" in alice_me)
+        check("alice collection shows village 1 / 40",
+              "My Village: 1 / 40" in alice_me)
         s, me_html = get(alice, "/me")
         check("collection page shows pictures",
               ("<svg" in me_html or "/img/" in me_html)
@@ -340,14 +397,15 @@ def main():
               "owner=%s" % bb["owner_id"])
         check("traded babies leave the trade board",
               ab["for_trade"] == 0 and bb["for_trade"] == 0)
-        # alice: 300 - 10 offered + 20 earned = 310
-        check("alice points = 310", a["points"] == 310,
+        # alice: 620 - 10 offered + 20 earned = 630
+        check("alice points = 630", a["points"] == 630,
               "got %d" % a["points"])
-        # bob: 300 + 10 received + 20 earned = 330
-        check("bob points = 330", b["points"] == 330, "got %d" % b["points"])
-        check("alice earned 20", a["points_earned"] == 20)
+        # bob: 600 + 10 received + 20 earned = 630
+        check("bob points = 630", b["points"] == 630, "got %d" % b["points"])
+        check("alice earned 40 (20 invite + 20 trade)",
+              a["points_earned"] == 40)
         check("bob earned 20", b["points_earned"] == 20)
-        check("creator still locked at 20/300",
+        check("creator still locked at 40/300",
               a["points_earned"] // 300 - a["creator_slots_used"] == 0)
         o = con2.execute("SELECT * FROM offers WHERE id=?",
                          (offer["id"],)).fetchone()
@@ -363,88 +421,101 @@ def main():
         check("world shows fish-like Blues", "fish-like" in world_html)
         check("world shows animal-like Browns", "animal-like" in world_html)
         check("world shows angel-like Reds", "angel-like" in world_html)
-        check("world shows Blacks as the Miners",
-              "Blacks — the Miners" in world_html)
-        check("world shows Diamond eyes for Blacks",
+        check("world shows Shadows as the protectors",
+              "Shadows — the protectors" in world_html)
+        check("world shows Diamond eyes for Shadows",
               "Diamond eyes" in world_html)
-        # 9. Weekly Black listing + 1,200-point gate
+        check("world shows no Blacks tribe name",
+              "Blacks" not in world_html)
+        # 9. Player-listed Shadow + 1,200-point gate (the weekly Shadow
+        # is now a $10.00 Shop pop-up, not a Trade Board listing).
+        seller = http.cookiejar.CookieJar()
+        s, _ = signup_full(seller, "seller", "secret2",
+                           tribe="Reds", roster="Storm")
+        check("seller signs up", s in (200, 302))
+        con3 = sqlite3.connect(DB)
+        con3.row_factory = sqlite3.Row
+        seller_row = con3.execute(
+            "SELECT * FROM users WHERE username='seller'").fetchone()
+        con3.execute(
+            "INSERT INTO babies (cert, owner_id, name, tribe,"
+            " hoodie_pattern, stones, face, for_trade, gender)"
+            " VALUES (?,?,?,?,?,?,?,1,'male')",
+            ("EHB-TEST-SHD", seller_row["id"], "Onyx", "Blacks",
+             "Underground Veil", "black stones on all-white hoodie",
+             "angry creature-like"))
+        con3.commit()
+        shadow = con3.execute(
+            "SELECT * FROM babies WHERE cert='EHB-TEST-SHD'").fetchone()
         s, browse_html = get(alice, "/browse")
         check("trade board shows a picture (photo or portrait)",
               "<svg" in browse_html or "/img/" in browse_html)
-        check("trade board shows weekly Black", "Blacks" in browse_html)
+        check("trade board shows a Shadow for trade",
+              "Shadows" in browse_html)
         check("trade board shows 1,200-point gate", "1,200" in browse_html)
-        check("trade board says Underground auto-accepts",
-              "auto-accept" in browse_html)
-        con3 = sqlite3.connect(DB)
-        con3.row_factory = sqlite3.Row
-        black = con3.execute(
-            "SELECT * FROM babies WHERE tribe='Blacks' AND for_trade=1"
-            ).fetchone()
-        check("weekly Black is listed", black is not None)
-        # alice has 310 points: below the gate, so the offer is refused
+        check("trade board has no Underground auto-accept",
+              "auto-accept" not in browse_html)
+        # alice has 630 points: below the gate, so the offer is refused
         s, resp = post(alice, "/offer",
-                       {"wanted_baby_id": black["id"],
+                       {"wanted_baby_id": shadow["id"],
                         "offered_points": "0"})
-        check("Black offer below 1,200 refused", "1,200" in resp)
+        check("Shadow offer below 1,200 refused", "1,200" in resp)
         no_offer = con3.execute(
             "SELECT * FROM offers WHERE wanted_baby=? AND from_user=? "
             "AND status='pending'",
-            (black["id"], alice_row["id"])).fetchone()
-        check("no pending offer created for refused Black trade",
+            (shadow["id"], alice_row["id"])).fetchone()
+        check("no pending offer created for refused Shadow trade",
               no_offer is None)
-        # boost alice to 1,500 points: the gate now passes, and the
-        # Underground auto-accepts the qualifying offer immediately.
-        # Alice offers the baby she got from Bob + 50 points.
+        # boost alice to 1,500 points: the gate now passes and the
+        # offer goes pending (no auto-accept any more). Alice offers
+        # the baby she got from Bob + 50 points.
         con3.execute("UPDATE users SET points=1500 WHERE username='alice'")
         con3.commit()
         s, _ = post(alice, "/offer",
-                    {"wanted_baby_id": black["id"],
+                    {"wanted_baby_id": shadow["id"],
                      "offered_baby_id": bob_baby["id"],
                      "offered_points": "50"})
         con4 = sqlite3.connect(DB)
         con4.row_factory = sqlite3.Row
-        a2 = con4.execute(
-            "SELECT * FROM users WHERE username='alice'").fetchone()
-        shop = con4.execute(
-            "SELECT * FROM users WHERE username='underground'").fetchone()
-        blk = con4.execute("SELECT * FROM babies WHERE id=?",
-                           (black["id"],)).fetchone()
-        sold_baby = con4.execute("SELECT * FROM babies WHERE id=?",
-                                 (bob_baby["id"],)).fetchone()
         sale = con4.execute(
             "SELECT * FROM offers WHERE wanted_baby=? AND from_user=?",
-            (black["id"], alice_row["id"])).fetchone()
-        check("Black offer at 1,500 points immediately accepted",
-              sale is not None and sale["status"] == "accepted")
-        check("buyer now owns the Black", blk["owner_id"] == a2["id"])
-        check("Black leaves the trade board", blk["for_trade"] == 0)
-        check("offered baby goes to the Underground",
-              sold_baby["owner_id"] == shop["id"])
+            (shadow["id"], alice_row["id"])).fetchone()
+        check("Shadow offer at 1,500 points goes pending",
+              sale is not None and sale["status"] == "pending")
+        # The seller accepts: buyer gets the Shadow + 60 points.
+        s, _ = post(seller, "/offer_action",
+                    {"offer_id": sale["id"], "action": "accept"})
+        a2 = con4.execute(
+            "SELECT * FROM users WHERE username='alice'").fetchone()
+        sh = con4.execute("SELECT * FROM babies WHERE id=?",
+                          (shadow["id"],)).fetchone()
+        sold_baby = con4.execute("SELECT * FROM babies WHERE id=?",
+                                 (bob_baby["id"],)).fetchone()
+        check("buyer now owns the Shadow", sh["owner_id"] == a2["id"])
+        check("Shadow leaves the trade board", sh["for_trade"] == 0)
+        check("offered baby goes to the seller",
+              sold_baby["owner_id"] == seller_row["id"])
         # alice: 1500 - 50 offered + 60 earned = 1510;
-        # earned 20 (earlier trade) + 60 (Black catch) = 80
-        check("buyer points = 1510 after Black sale",
+        # earned 40 (invite + earlier trade) + 60 (Shadow) = 100
+        check("buyer points = 1510 after Shadow trade",
               a2["points"] == 1510, "got %d" % a2["points"])
-        check("buyer earned 80 after Black sale (60 for the Black)",
-              a2["points_earned"] == 80, "got %d" % a2["points_earned"])
-        notice = con4.execute(
-            "SELECT * FROM notices WHERE text LIKE '%caught by alice%'"
-            ).fetchone()
-        check("notices board records the Black catch", notice is not None)
-        # Second offer against the same Black must fail cleanly: boost
-        # Bob past the gate too, so the failure is about the Black being
-        # gone, not the points gate.
+        check("buyer earned 100 after Shadow trade (60 for the Shadow)",
+              a2["points_earned"] == 100, "got %d" % a2["points_earned"])
+        # Second offer against the same Shadow must fail cleanly: boost
+        # Bob past the gate too, so the failure is about the Shadow
+        # being gone, not the points gate.
         con4.execute("UPDATE users SET points=1500 WHERE username='bob'")
         con4.commit()
         s, resp2 = post(bob, "/offer",
-                        {"wanted_baby_id": black["id"],
+                        {"wanted_baby_id": shadow["id"],
                          "offered_points": "0"})
-        check("second offer against caught Black fails",
+        check("second offer against traded Shadow fails",
               "not up for trade" in resp2)
         no_second = con4.execute(
             "SELECT * FROM offers WHERE wanted_baby=? AND from_user=? "
             "AND status IN ('pending', 'accepted')",
-            (black["id"], bob_row["id"])).fetchone()
-        check("no second offer recorded for caught Black",
+            (shadow["id"], bob_row["id"])).fetchone()
+        check("no second offer recorded for traded Shadow",
               no_second is None)
         con4.close()
         con3.close()
@@ -654,11 +725,11 @@ def main():
                 "'points'", (dave_row["id"],)).fetchone()
             check("failed points purchase recorded as failed",
                   ppur is not None and ppur["status"] == "failed"
-                  and ppur["amount"] == "3.99")
+                  and ppur["amount"] == "9.99")
             drow = fcon4.execute(
                 "SELECT * FROM users WHERE username='dave'").fetchone()
             check("failed points pack adds no points",
-                  drow["points"] == 300 and drow["points_earned"] == 0,
+                  drow["points"] == 600 and drow["points_earned"] == 0,
                   "points=%d earned=%d" % (drow["points"],
                                            drow["points_earned"]))
             fcon.close()
@@ -823,9 +894,9 @@ def main():
                 (item2["id"],)).fetchone()
             check("cancelled purchase leaves shop item unsold",
                   sold2["sold"] == 0)
-            # Unpaid points pack grants no points.
+            # Unpaid points pack grants no points (300 pack, $4.99).
             s, hdrs, _ = post_noredirect(
-                frank, "/buy_points_stripe", {"pack": "900"},
+                frank, "/buy_points_stripe", {"pack": "300"},
                 base=unpaid_base)
             parsed = urllib.parse.urlparse(hdrs.get("Location", ""))
             ret_path = parsed.path + ("?" + parsed.query if parsed.query
@@ -840,11 +911,20 @@ def main():
                 "'points'", (frank_row["id"],)).fetchone()
             check("unpaid points purchase recorded as failed",
                   ppur is not None and ppur["status"] == "failed"
-                  and ppur["amount"] == "9.99")
+                  and ppur["amount"] == "4.99")
             frow = ucon4.execute(
                 "SELECT * FROM users WHERE username='frank'").fetchone()
             check("unpaid points pack adds no points",
-                  frow["points"] == 300 and frow["points_earned"] == 0)
+                  frow["points"] == 600 and frow["points_earned"] == 0)
+            # The removed 900 pack is refused outright on both
+            # providers, even with a valid session.
+            s, resp = post(frank, "/buy_points", {"pack": "900"},
+                           base=unpaid_base)
+            check("900 pack refused via PayPal", "not for sale" in resp)
+            s, resp = post(frank, "/buy_points_stripe", {"pack": "900"},
+                           base=unpaid_base)
+            check("900 pack refused via Cash App Pay",
+                  "not for sale" in resp)
             ucon.close()
             ucon2.close()
             ucon3.close()
@@ -1076,16 +1156,16 @@ def main():
             pcon.row_factory = sqlite3.Row
             w1_row = pcon.execute(
                 "SELECT * FROM users WHERE username='w1'").fetchone()
-            check("600-point pack raises balance to 900",
-                  w1_row["points"] == 900, "got %d" % w1_row["points"])
+            check("600-point pack raises balance to 1200",
+                  w1_row["points"] == 1200, "got %d" % w1_row["points"])
             check("bought points do not raise points_earned",
                   w1_row["points_earned"] == 0)
             ppur = pcon.execute(
                 "SELECT * FROM purchases WHERE user_id=? AND item_type="
                 "'points'", (w1_row["id"],)).fetchone()
-            check("points purchase recorded at $3.99",
+            check("points purchase recorded at $9.99",
                   ppur is not None and ppur["status"] == "completed"
-                  and ppur["amount"] == "3.99")
+                  and ppur["amount"] == "9.99")
             pcon.close()
             # 1,200 points via Cash App Pay.
             s, hdrs, _ = post_noredirect(
@@ -1101,8 +1181,8 @@ def main():
             pcon2.row_factory = sqlite3.Row
             w1_row = pcon2.execute(
                 "SELECT * FROM users WHERE username='w1'").fetchone()
-            check("1200-point pack raises balance to 2100",
-                  w1_row["points"] == 2100, "got %d" % w1_row["points"])
+            check("1200-point pack raises balance to 2400",
+                  w1_row["points"] == 2400, "got %d" % w1_row["points"])
             check("stripe bought points still do not raise earned",
                   w1_row["points_earned"] == 0)
             s, me_html = get(w1, "/me", base=pts_base)
@@ -1139,7 +1219,7 @@ def main():
         check("chooser's free baby is Blues, renamed",
               ch_baby["tribe"] == "Blues" and ch_baby["name"] == "Bubbles",
               "got %s %s" % (ch_baby["tribe"], ch_baby["name"]))
-        check("chooser starts with 300 points", ch_row["points"] == 300)
+        check("chooser starts with 600 points", ch_row["points"] == 600)
         # Reds + roster name kept as-is (blank name).
         keeper = http.cookiejar.CookieJar()
         s, _ = signup_full(keeper, "keeper", "secret10",
@@ -1405,8 +1485,8 @@ def main():
             check("shop shows struck-through deal price",
                   "<s>$1.99</s>" in shop_html)
             check("shop shows pop-up color section",
-                  "New color pop-up" in shop_html)
-            popup_idx = shop_html.find("New color pop-up")
+                  "Drifter pop-up" in shop_html)
+            popup_idx = shop_html.find("Drifter pop-up")
             check("shop pop-up card uses a realistic photo",
                   popup_idx >= 0
                   and "<img src='/img/" in
@@ -1563,11 +1643,11 @@ def main():
             check("leader purchase completes",
                   "Payment complete" in ret_html)
             s, world_html = get(dana, "/world", base=bbase)
-            check("world shows dana as Blues owner",
+            check("world shows dana as Waterliewaveminans owner",
                   "Owner: dana" in world_html)
             s, me_html = get(dana, "/me", base=bbase)
-            check("owner home shows Blues ownership",
-                  "Owner of the Blues tribe" in me_html)
+            check("owner home shows Waterliewaveminans ownership",
+                  "Owner of the Waterliewaveminans tribe" in me_html)
             erin = http.cookiejar.CookieJar()
             s, _ = signup_full(erin, "erin", "secret9",
                                tribe="Blues", roster="Coral",
@@ -1598,8 +1678,26 @@ def main():
             s, world_html = get(dana, "/world", base=bbase)
             check("ownership passes when leader is traded",
                   "Owner: erin" in world_html)
+            # Dana buys the Shadow pop-up, so a Shadows-tribe baby
+            # exists for the gender checks below (the old weekly board
+            # listing is gone — Shadows are now a Shop pop-up).
+            sh_item = bcon.execute(
+                "SELECT * FROM popup_items WHERE tier='shadow' AND "
+                "stock>0 ORDER BY id").fetchone()
+            check("Shadow pop-up listing exists on bundle server",
+                  sh_item is not None)
+            s, ret_html = buy_and_capture(
+                dana, "/buy_popup", {"popup_id": sh_item["id"]})
+            check("Shadow pop-up purchase completes",
+                  "Payment complete" in ret_html)
+            sh_baby = bcon.execute(
+                "SELECT * FROM babies WHERE cert=?",
+                (sh_item["cert"],)).fetchone()
+            check("Shadow pop-up grants the baby",
+                  sh_baby is not None
+                  and sh_baby["owner_id"] == dana_row["id"])
             # Gender markers under the corrected rule: leaders female,
-            # Blacks and gods male, regular babies unmarked.
+            # Shadows and gods male, regular babies unmarked.
             leader_row = bcon.execute(
                 "SELECT gender FROM babies WHERE cert='EHB-L001'"
                 ).fetchone()
@@ -1609,7 +1707,7 @@ def main():
             black_row = bcon.execute(
                 "SELECT gender FROM babies WHERE tribe='Blacks'"
                 ).fetchone()
-            check("Black baby row is male",
+            check("Shadow baby row is male",
                   black_row is not None
                   and black_row["gender"] == "male")
             marked_regular = bcon.execute(
@@ -1621,8 +1719,12 @@ def main():
             s, erin_me = get(erin, "/me", base=bbase)
             check("leader card shows the female marker",
                   "♀" in erin_me)
-            s, browse_html = get(dana, "/browse", base=bbase)
-            check("Black card shows the male marker",
+            # Dana lists her Shadow for trade; erin's board shows it
+            # with the male marker.
+            s, _ = post(dana, "/toggle_trade",
+                        {"baby_id": sh_baby["id"]}, base=bbase)
+            s, browse_html = get(erin, "/browse", base=bbase)
+            check("Shadow card shows the male marker",
                   "♂" in browse_html)
             s, shop2_html = get(dana, "/shop", base=bbase)
             check("god card shows the male marker",
@@ -1700,7 +1802,7 @@ def main():
             s, _ = signup_full(board_jar, "board", "secret9",
                                tribe="Reds", roster="Ember")
             s, browse2_html = get(board_jar, "/browse")
-            check("board Black listing uses the Black photo",
+            check("board Shadow listing uses the Black photo",
                   "/img/black-miner.jpg" in browse2_html)
             mcon = sqlite3.connect(DB)
             mcon.row_factory = sqlite3.Row
@@ -1740,6 +1842,533 @@ def main():
                 bproc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 bproc.kill()
+
+        # 19. Renames, 600 start, new packs, pop-up tiers, villages,
+        # invite bonus, Shadow $10 shop buy, no "Blacks" tribe name.
+        nport, ndb = 8103, "/tmp/escamo_new_test.db"
+        nproc, nbase = start_server(
+            nport, ndb, {"PAYPAL_MOCK": "1", "STRIPE_MOCK": "1"})
+        try:
+            def n_buy(jar, path, data):
+                s, hdrs, _ = post_noredirect(jar, path, data,
+                                             base=nbase)
+                loc = hdrs.get("Location", "")
+                if "buy_return" not in loc and "stripe_return" not in loc:
+                    return s, ""
+                parsed = urllib.parse.urlparse(loc)
+                ret = parsed.path + ("?" + parsed.query
+                                     if parsed.query else "")
+                return get(jar, ret, base=nbase)
+
+            nova = http.cookiejar.CookieJar()
+            s, _ = signup_full(nova, "nova", "secret9", base=nbase)
+            check("nova signs up on new-features server", s in (200, 302))
+            ncon = sqlite3.connect(ndb)
+            ncon.row_factory = sqlite3.Row
+            nova_row = ncon.execute(
+                "SELECT * FROM users WHERE username='nova'").fetchone()
+            check("new signup grants 600 points, 0 earned",
+                  nova_row["points"] == 600
+                  and nova_row["points_earned"] == 0,
+                  "points=%d earned=%d" % (nova_row["points"],
+                                           nova_row["points_earned"]))
+            s, home_html = get(nova, "/", base=nbase)
+            check("home shows 600 starting points",
+                  "600 points" in home_html)
+            # Physical-figure disclaimer: exact wording, small print
+            # but legible, on Home and Shop (it is site-wide via the
+            # page footer, so it appears everywhere).
+            notice = ("Note: the original Hoodie Babies figure will not "
+                      "be released until further notice — but actual, "
+                      "physical Hoodie Babies are coming. Nothing is set "
+                      "in stone yet.")
+            check("home shows the physical-figure disclaimer",
+                  notice in home_html)
+            check("home disclaimer is small print, not hidden",
+                  "font-size:13px" in home_html
+                  and "display:none" not in home_html
+                  and "visibility:hidden" not in home_html)
+            s, world2 = get(nova, "/world", base=nbase)
+            check("world shows renamed tribes",
+                  "Waterliewaveminans" in world2
+                  and "Fortress Rooted" in world2
+                  and "Windyworrors" in world2
+                  and "Shadows" in world2)
+            check("world shows no Blacks tribe name",
+                  "Blacks" not in world2)
+            s, signup_html = get(nova, "/signup", base=nbase)
+            check("signup shows renamed tribes, no Blacks",
+                  "Waterliewaveminans" in signup_html
+                  and "Fortress Rooted" in signup_html
+                  and "Windyworrors" in signup_html
+                  and "Blacks" not in signup_html)
+            s, shop2 = get(nova, "/shop", base=nbase)
+            check("shop shows the physical-figure disclaimer",
+                  notice in shop2)
+            check("shop disclaimer is small print, not hidden",
+                  "font-size:13px" in shop2
+                  and "display:none" not in shop2)
+            check("shop shows new points packs",
+                  "300 points" in shop2 and "4.99" in shop2
+                  and "600 points" in shop2 and "9.99" in shop2
+                  and "1200 points" in shop2 and "20.00" in shop2)
+            check("shop shows no 900 pack",
+                  "900 points" not in shop2)
+            check("shop shows drifter $1.99",
+                  "Drifter pop-up" in shop2)
+            check("shop shows special $4.99, 25 of 25 left",
+                  "Special pop-up" in shop2
+                  and "Only 25 of 25 left" in shop2)
+            check("shop shows rare $9.99, 8 of 8 left",
+                  "Rare pop-up" in shop2
+                  and "Only 8 of 8 left" in shop2)
+            check("shop shows Shadow pop-up $10.00",
+                  "Shadow pop-up" in shop2 and "$10.00" in shop2)
+            check("shop shows no Blacks tribe name",
+                  "Blacks" not in shop2)
+            # Drifter buy (PayPal) at $1.99.
+            d = ncon.execute(
+                "SELECT * FROM popup_items WHERE tier='drifter' AND "
+                "stock>0 ORDER BY id").fetchone()
+            check("drifter listing exists", d is not None)
+            s, ret_html = n_buy(nova, "/buy_popup", {"popup_id": d["id"]})
+            check("drifter purchase completes",
+                  "Payment complete" in ret_html, "status=%s" % s)
+            dpur = ncon.execute(
+                "SELECT * FROM purchases WHERE user_id=? AND item_type="
+                "'popup' ORDER BY id DESC",
+                (nova_row["id"],)).fetchone()
+            check("drifter purchase recorded at $1.99",
+                  dpur is not None and dpur["amount"] == "1.99"
+                  and dpur["status"] == "completed")
+            # Special buys: two copies, certs suffixed, stock drops.
+            sp = ncon.execute(
+                "SELECT * FROM popup_items WHERE tier='special' AND "
+                "stock>0 ORDER BY id").fetchone()
+            check("special listing exists", sp is not None)
+            s, ret_html = n_buy(nova, "/buy_popup", {"popup_id": sp["id"]})
+            check("special purchase completes",
+                  "Payment complete" in ret_html)
+            sp1 = ncon.execute(
+                "SELECT * FROM babies WHERE cert=?",
+                (sp["cert"] + "-01",)).fetchone()
+            check("first special copy gets -01 cert",
+                  sp1 is not None and sp1["owner_id"] == nova_row["id"])
+            sp_row = ncon.execute(
+                "SELECT * FROM popup_items WHERE id=?",
+                (sp["id"],)).fetchone()
+            check("special stock drops to 24", sp_row["stock"] == 24,
+                  "got %s" % sp_row["stock"])
+            s, ret_html = n_buy(nova, "/buy_popup_stripe",
+                                {"popup_id": sp["id"]})
+            check("second special purchase completes via Cash App Pay",
+                  "Payment complete" in ret_html)
+            sp2 = ncon.execute(
+                "SELECT * FROM babies WHERE cert=?",
+                (sp["cert"] + "-02",)).fetchone()
+            check("second special copy gets -02 cert", sp2 is not None)
+            sp_row = ncon.execute(
+                "SELECT * FROM popup_items WHERE id=?",
+                (sp["id"],)).fetchone()
+            check("special stock drops to 23", sp_row["stock"] == 23,
+                  "got %s" % sp_row["stock"])
+            # Rare buy (Stripe) at $9.99, stock 8 -> 7.
+            ra = ncon.execute(
+                "SELECT * FROM popup_items WHERE tier='rare' AND "
+                "stock>0 ORDER BY id").fetchone()
+            check("rare listing exists", ra is not None)
+            s, ret_html = n_buy(nova, "/buy_popup_stripe",
+                                {"popup_id": ra["id"]})
+            check("rare purchase completes",
+                  "Payment complete" in ret_html)
+            ra_row = ncon.execute(
+                "SELECT * FROM popup_items WHERE id=?",
+                (ra["id"],)).fetchone()
+            check("rare stock drops to 7", ra_row["stock"] == 7,
+                  "got %s" % ra_row["stock"])
+            # Shadow buy (PayPal) at $10.00.
+            sh = ncon.execute(
+                "SELECT * FROM popup_items WHERE tier='shadow' AND "
+                "stock>0 ORDER BY id").fetchone()
+            check("Shadow listing exists", sh is not None)
+            s, ret_html = n_buy(nova, "/buy_popup", {"popup_id": sh["id"]})
+            check("Shadow purchase completes",
+                  "Payment complete" in ret_html)
+            shpur = ncon.execute(
+                "SELECT * FROM purchases WHERE user_id=? AND item_type="
+                "'popup' AND amount='10.00' ORDER BY id DESC",
+                (nova_row["id"],)).fetchone()
+            check("Shadow purchase recorded at $10.00",
+                  shpur is not None and shpur["status"] == "completed")
+            shbaby = ncon.execute(
+                "SELECT * FROM babies WHERE cert=?",
+                (sh["cert"],)).fetchone()
+            check("Shadow purchase grants a Shadows-tribe baby",
+                  shbaby is not None
+                  and shbaby["owner_id"] == nova_row["id"]
+                  and shbaby["tribe"] == "Blacks")
+            # Sold-out listing disappears and cannot be bought.
+            ncon.execute("UPDATE popup_items SET stock=0, sold=1 "
+                         "WHERE id=?", (sp["id"],))
+            ncon.commit()
+            s, shop3 = get(nova, "/shop", base=nbase)
+            check("sold-out special disappears from shop",
+                  "Special pop-up" not in shop3)
+            s, resp = post(nova, "/buy_popup", {"popup_id": sp["id"]},
+                           base=nbase)
+            check("sold-out special cannot be bought",
+                  "no longer for sale" in resp)
+            # Village: nova now has free baby + drifter + 2 specials +
+            # rare + Shadow = 6 non-leader babies.
+            vcount, _ = escamo_app.village_progress(ncon, nova_row["id"])
+            check("village counts 6 non-leader babies", vcount == 6,
+                  "got %d" % vcount)
+            # Fill to 39 (no complete), then 40 (complete).
+            for i in range(33):
+                ncon.execute(
+                    "INSERT INTO babies (cert, owner_id, name, tribe,"
+                    " hoodie_pattern, stones, face)"
+                    " VALUES (?,?,?,?,?,?,?)",
+                    ("EHB-V%03d" % i, nova_row["id"], "Villager%d" % i,
+                     "Blues", "Village Weave", "yellow rhinestones",
+                     "fish-like"))
+            ncon.commit()
+            vcount, _ = escamo_app.village_progress(ncon, nova_row["id"])
+            check("village counts 39 before completion", vcount == 39,
+                  "got %d" % vcount)
+            s, me2 = get(nova, "/me", base=nbase)
+            check("collection shows village 39 / 40, not complete",
+                  "My Village: 39 / 40" in me2
+                  and "Village complete!" not in me2)
+            ncon.execute(
+                "INSERT INTO babies (cert, owner_id, name, tribe,"
+                " hoodie_pattern, stones, face)"
+                " VALUES (?,?,?,?,?,?,?)",
+                ("EHB-V999", nova_row["id"], "VillagerX",
+                 "Reds", "Village Weave", "red rhinestones",
+                 "angel-like"))
+            ncon.commit()
+            s, me3 = get(nova, "/me", base=nbase)
+            check("collection shows village complete at 40",
+                  "My Village: 40 / 40" in me3
+                  and "Village complete!" in me3)
+            # A leader purchase does not raise the village count.
+            ld = ncon.execute(
+                "SELECT * FROM leaders WHERE name='Damiana June'"
+                ).fetchone()
+            s, ret_html = n_buy(nova, "/buy_leader",
+                                {"leader_id": ld["id"]})
+            check("leader purchase completes on new server",
+                  "Payment complete" in ret_html)
+            vcount, vnames = escamo_app.village_progress(
+                ncon, nova_row["id"])
+            check("leader excluded from village count", vcount == 40,
+                  "got %d" % vcount)
+            check("village progress names the owned leader",
+                  "Damiana June" in vnames)
+            s, me4 = get(nova, "/me", base=nbase)
+            check("collection shows village leader alongside",
+                  "Village leader: Damiana June" in me4)
+            # Invite bonus: a friend joining with nova's code pays +20.
+            friend = http.cookiejar.CookieJar()
+            s, _ = signup_full(friend, "friend1", "secret9",
+                               tribe="Browns", roster="Fern",
+                               invite=nova_row["invite_code"],
+                               base=nbase)
+            check("invited friend signs up", s in (200, 302))
+            ncon2 = sqlite3.connect(ndb)
+            ncon2.row_factory = sqlite3.Row
+            nova2 = ncon2.execute(
+                "SELECT * FROM users WHERE username='nova'").fetchone()
+            check("inviter gains +20 balance and +20 earned",
+                  nova2["points"] == 620
+                  and nova2["points_earned"] == 20,
+                  "points=%d earned=%d" % (nova2["points"],
+                                           nova2["points_earned"]))
+            s, me5 = get(nova, "/me", base=nbase)
+            check("collection shows invite bonus line",
+                  "Invite bonus: +20 points" in me5)
+            # 20. Baby detail viewer: fullscreen zoom + drag-to-spin
+            # 360 (front photo + back-details card) + Make-it-real
+            # note, linked from collection, shop, board, and the
+            # purchase confirmation.
+            nbaby = ncon.execute(
+                "SELECT * FROM babies WHERE owner_id=? ORDER BY id",
+                (nova_row["id"],)).fetchone()
+            check("nova has a baby to view", nbaby is not None)
+            ncert = nbaby["cert"]
+            s, detail = get(nova, "/baby/" + ncert, base=nbase)
+            check("detail page renders", s == 200
+                  and nbaby["name"] in detail)
+            check("detail page has the spin viewer",
+                  "spin-stage" in detail
+                  and "spin-prev" in detail
+                  and "spin-next" in detail
+                  and "Front view" in detail
+                  and "Back view" in detail)
+            check("detail back view is honestly a details card, "
+                  "not a photo",
+                  "not a photo of the back yet" in detail)
+            check("detail back view shows pattern, stones, tribe, "
+                  "cert",
+                  nbaby["hoodie_pattern"] in detail
+                  and nbaby["stones"] in detail
+                  and ("Stones: %d" % escamo_app.stone_count(
+                      nbaby["tribe"], nbaby["cert"],
+                      nbaby["name"])) in detail
+                  and escamo_app.tribe_display(
+                      nbaby["tribe"]) in detail
+                  and ncert in detail)
+            check("detail page has fullscreen zoom elements",
+                  "fs-overlay" in detail
+                  and "fs-zoom-in" in detail
+                  and "fs-zoom-out" in detail
+                  and "Blow it up fullscreen" in detail)
+            check("detail page has the Make-it-real note",
+                  "Make it real" in detail
+                  and "made real, exactly as it appears online"
+                  in detail)
+            check("detail page promises no order or payment",
+                  "nothing to order or pay for yet" in detail)
+            # Unknown certificate 404s.
+            try:
+                s, _ = get(nova, "/baby/NOPE-123", base=nbase)
+                notfound = s
+            except urllib.error.HTTPError as e:
+                notfound = e.code
+            check("unknown baby detail 404s", notfound == 404)
+            # A shop item (not yet a baby) has a detail page too.
+            sitem = ncon.execute(
+                "SELECT * FROM shop_items WHERE sold=0 ORDER BY id"
+                ).fetchone()
+            check("unsold shop item exists", sitem is not None)
+            s, sdetail = get(nova, "/baby/" + sitem["cert"],
+                             base=nbase)
+            check("shop item detail page renders",
+                  s == 200 and sitem["name"] in sdetail
+                  and "spin-stage" in sdetail)
+            # Links into the viewer from collection, shop, board.
+            s, me6 = get(nova, "/me", base=nbase)
+            check("collection links to the detail viewer",
+                  ("/baby/" + ncert) in me6)
+            s, shop4 = get(nova, "/shop", base=nbase)
+            check("shop links to the detail viewer",
+                  "/baby/" in shop4
+                  and ("/baby/" + sitem["cert"]) in shop4)
+            # A second user's baby on the board links to its viewer.
+            fr_row = ncon2.execute(
+                "SELECT * FROM users WHERE username='friend1'"
+                ).fetchone()
+            fr_baby = ncon2.execute(
+                "SELECT * FROM babies WHERE owner_id=? ORDER BY id",
+                (fr_row["id"],)).fetchone()
+            ncon2.execute("UPDATE babies SET for_trade=1 WHERE id=?",
+                          (fr_baby["id"],))
+            ncon2.commit()
+            s, brow = get(nova, "/browse", base=nbase)
+            check("trade board links to the detail viewer",
+                  ("/baby/" + fr_baby["cert"]) in brow)
+            # Purchase confirmation links to the new baby's viewer.
+            it = ncon.execute(
+                "SELECT * FROM shop_items WHERE sold=0 ORDER BY id"
+                ).fetchone()
+            s, ret_html = n_buy(nova, "/buy",
+                                {"shop_item_id": it["id"]})
+            check("individual purchase completes",
+                  "Payment complete" in ret_html)
+            check("purchase confirmation links to detail viewer",
+                  "View your baby" in ret_html
+                  and ("/baby/" + it["cert"]) in ret_html)
+            # No "Blacks" tribe name on any user-facing page.
+            for path in ("/", "/world", "/shop", "/signup", "/me",
+                         "/browse", "/notices"):
+                s, html = get(nova, path, base=nbase)
+                check("no Blacks tribe name on %s" % path,
+                      "Blacks" not in html)
+            ncon.close()
+            ncon2.close()
+        finally:
+            nproc.terminate()
+            try:
+                nproc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                nproc.kill()
+
+        # 20. Points are NEVER a purchase currency: shop and pop-up
+        # buys are money only (PayPal/Stripe). Points move only inside
+        # trade offers, to the other trader on accept.
+        pport, pdb = 8104, "/tmp/escamo_points_currency_test.db"
+        pproc, pbase = start_server(
+            pport, pdb,
+            {"PAYPAL_MOCK": "", "STRIPE_MOCK": "",
+             "PAYPAL_CLIENT_ID": "", "PAYPAL_CLIENT_SECRET": "",
+             "STRIPE_SECRET_KEY": ""})
+        try:
+            rich = http.cookiejar.CookieJar()
+            s, _ = signup_full(rich, "rich", "secret9", base=pbase)
+            check("points-currency user signs up", s in (200, 302))
+            pcon = sqlite3.connect(pdb)
+            pcon.row_factory = sqlite3.Row
+            rich_row = pcon.execute(
+                "SELECT * FROM users WHERE username='rich'").fetchone()
+            # Make the user rich in points: even 99,999 points must
+            # not buy anything without money going through a provider.
+            pcon.execute("UPDATE users SET points=99999 WHERE id=?",
+                         (rich_row["id"],))
+            pcon.commit()
+            # A shop visit ensures the weekly pop-up listings exist.
+            s, shop4 = get(rich, "/shop", base=pbase)
+            pcon = sqlite3.connect(pdb)
+            pcon.row_factory = sqlite3.Row
+            item = pcon.execute(
+                "SELECT * FROM shop_items WHERE sold=0 ORDER BY id"
+                ).fetchone()
+            ld = pcon.execute(
+                "SELECT * FROM leaders WHERE sold=0 ORDER BY id"
+                ).fetchone()
+            gd = pcon.execute(
+                "SELECT * FROM gods WHERE sold=0 ORDER BY id").fetchone()
+            pop = pcon.execute(
+                "SELECT * FROM popup_items WHERE stock>0 ORDER BY id"
+                ).fetchone()
+            for path, data in (
+                    ("/buy", {"shop_item_id": item["id"]}),
+                    ("/buy_stripe", {"shop_item_id": item["id"]}),
+                    ("/buy_leader", {"leader_id": ld["id"]}),
+                    ("/buy_leader_stripe", {"leader_id": ld["id"]}),
+                    ("/buy_god", {"god_id": gd["id"]}),
+                    ("/buy_god_stripe", {"god_id": gd["id"]}),
+                    ("/buy_popup", {"popup_id": pop["id"]}),
+                    ("/buy_popup_stripe", {"popup_id": pop["id"]}),
+                    ("/buy_points", {"pack": "300"}),
+                    ("/buy_points_stripe", {"pack": "300"})):
+                s, resp = post(rich, path, data, base=pbase)
+                check("no-provider %s refuses the buy" % path,
+                      "not set up yet" in resp, "status=%s" % s)
+            babies = pcon.execute(
+                "SELECT COUNT(*) FROM babies WHERE owner_id=?",
+                (rich_row["id"],)).fetchone()[0]
+            check("no-provider buys grant no babies", babies == 1,
+                  "got %d" % babies)
+            purs = pcon.execute(
+                "SELECT COUNT(*) FROM purchases WHERE user_id=?",
+                (rich_row["id"],)).fetchone()[0]
+            check("no-provider buys record no purchases", purs == 0,
+                  "got %d" % purs)
+            # Shop buy forms all point at money-provider routes (or
+            # the free monthly-gift claim, which is not a purchase);
+            # none offers to pay with points.
+            actions = set(re.findall(r"action='([^']+)'", shop4))
+            allowed = {"/buy", "/buy_stripe", "/buy_leader",
+                       "/buy_leader_stripe", "/buy_god",
+                       "/buy_god_stripe", "/buy_points",
+                       "/buy_points_stripe", "/buy_popup",
+                       "/buy_popup_stripe", "/claim_gift"}
+            check("shop forms are money routes or the free gift only",
+                  actions <= allowed, "actions=%s" % sorted(actions))
+            check("shop offers no pay-with-points button",
+                  "Buy with points" not in shop4
+                  and "pay with points" not in shop4.lower())
+            # (b) Points DO move inside trade offers, exactly.
+            giver = http.cookiejar.CookieJar()
+            taker = http.cookiejar.CookieJar()
+            s, _ = signup_full(giver, "giver", "secret9",
+                               tribe="Blues", roster="Marina", base=pbase)
+            check("giver signs up", s in (200, 302))
+            s, _ = signup_full(taker, "taker", "secret9",
+                               tribe="Browns", roster="Willow", base=pbase)
+            check("taker signs up", s in (200, 302))
+            pcon2 = sqlite3.connect(pdb)
+            pcon2.row_factory = sqlite3.Row
+            giver_row = pcon2.execute(
+                "SELECT * FROM users WHERE username='giver'").fetchone()
+            taker_row = pcon2.execute(
+                "SELECT * FROM users WHERE username='taker'").fetchone()
+            giver_baby = pcon2.execute(
+                "SELECT * FROM babies WHERE owner_id=?",
+                (giver_row["id"],)).fetchone()
+            taker_baby = pcon2.execute(
+                "SELECT * FROM babies WHERE owner_id=?",
+                (taker_row["id"],)).fetchone()
+            s, _ = post(taker, "/toggle_trade",
+                        {"baby_id": taker_baby["id"]}, base=pbase)
+            # Offer: giver's baby + exactly 75 points for taker's baby.
+            s, _ = post(giver, "/offer",
+                        {"wanted_baby_id": taker_baby["id"],
+                         "offered_baby_id": giver_baby["id"],
+                         "offered_points": "75"}, base=pbase)
+            off = pcon2.execute(
+                "SELECT * FROM offers WHERE from_user=? AND to_user=? "
+                "AND status='pending'",
+                (giver_row["id"], taker_row["id"])).fetchone()
+            check("points offer recorded as pending", off is not None)
+            s, _ = post(taker, "/offer_action",
+                        {"offer_id": off["id"], "action": "accept"},
+                        base=pbase)
+            pcon3 = sqlite3.connect(pdb)
+            pcon3.row_factory = sqlite3.Row
+            g2 = pcon3.execute(
+                "SELECT * FROM users WHERE username='giver'").fetchone()
+            t2 = pcon3.execute(
+                "SELECT * FROM users WHERE username='taker'").fetchone()
+            # giver: 600 - 75 offered + 20 award = 545; taker: 600 + 75
+            # received + 20 award = 695; each earned +20 (award kept).
+            check("offered points leave the giver exactly",
+                  g2["points"] == 545, "got %d" % g2["points"])
+            check("offered points arrive with the taker exactly",
+                  t2["points"] == 695, "got %d" % t2["points"])
+            check("trade award still +20 earned each",
+                  g2["points_earned"] == 20
+                  and t2["points_earned"] == 20)
+            # Points-only offer (no baby): 40 points move on accept.
+            giver2 = http.cookiejar.CookieJar()
+            taker2 = http.cookiejar.CookieJar()
+            s, _ = signup_full(giver2, "giver2", "secret9",
+                               tribe="Reds", roster="Ember", base=pbase)
+            s, _ = signup_full(taker2, "taker2", "secret9",
+                               tribe="Blues", roster="Coral", base=pbase)
+            pcon4 = sqlite3.connect(pdb)
+            pcon4.row_factory = sqlite3.Row
+            g2r = pcon4.execute(
+                "SELECT * FROM users WHERE username='giver2'").fetchone()
+            t2r = pcon4.execute(
+                "SELECT * FROM users WHERE username='taker2'").fetchone()
+            t2baby = pcon4.execute(
+                "SELECT * FROM babies WHERE owner_id=?",
+                (t2r["id"],)).fetchone()
+            s, _ = post(taker2, "/toggle_trade",
+                        {"baby_id": t2baby["id"]}, base=pbase)
+            s, _ = post(giver2, "/offer",
+                        {"wanted_baby_id": t2baby["id"],
+                         "offered_points": "40"}, base=pbase)
+            off2 = pcon4.execute(
+                "SELECT * FROM offers WHERE from_user=? AND to_user=? "
+                "AND status='pending'",
+                (g2r["id"], t2r["id"])).fetchone()
+            check("points-only offer recorded", off2 is not None)
+            s, _ = post(taker2, "/offer_action",
+                        {"offer_id": off2["id"], "action": "accept"},
+                        base=pbase)
+            pcon5 = sqlite3.connect(pdb)
+            pcon5.row_factory = sqlite3.Row
+            ga = pcon5.execute(
+                "SELECT * FROM users WHERE username='giver2'").fetchone()
+            ta = pcon5.execute(
+                "SELECT * FROM users WHERE username='taker2'").fetchone()
+            check("points-only offer moves exactly 40 points",
+                  ga["points"] == 580 and ta["points"] == 660,
+                  "giver=%d taker=%d" % (ga["points"], ta["points"]))
+            pcon.close()
+            pcon2.close()
+            pcon3.close()
+            pcon4.close()
+            pcon5.close()
+        finally:
+            pproc.terminate()
+            try:
+                pproc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pproc.kill()
     finally:
         proc.terminate()
         try:

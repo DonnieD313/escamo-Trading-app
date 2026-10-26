@@ -145,6 +145,21 @@ BLACKS_ROSTER = [
 BLACK_STONES = "black stones on all-white hoodie"
 BLACK_FACE = "angry creature-like"
 
+# Display names for the tribes (Doneil's renames). Internal keys stay
+# Blues/Browns/Reds/Blacks everywhere in the database and code — only
+# what users see changes. Colors, faces, and lore stay the same.
+TRIBE_DISPLAY = {
+    "Blues": "Waterliewaveminans",
+    "Browns": "Fortress Rooted",
+    "Reds": "Windyworrors",
+    "Blacks": "Shadows",
+    "Gods": "Gods",
+}
+
+
+def tribe_display(tribe):
+    return TRIBE_DISPLAY.get(tribe, tribe)
+
 # Display-only prices. Real-money purchases stay pending a payment
 # provider choice — nothing here charges anyone.
 PRICE_LEADER = "10.00"
@@ -180,8 +195,25 @@ GODS = [
 # Points packs: (points, price). Bought points add to balance only and
 # never count toward the character-creator unlock (trade-earned only).
 POINTS_PACKS = [
-    (300, "1.99"), (600, "3.99"), (900, "9.99"), (1200, "20.00"),
+    (300, "4.99"), (600, "9.99"), (1200, "20.00"),
 ]
+# New signups start with 600 points (balance only — starting points
+# never count toward the character-creator unlock, same as bought
+# points). Existing accounts are untouched.
+STARTING_POINTS = 600
+# Invite bonus: +20 points to the inviter (balance AND earned) when an
+# invited friend completes signup.
+INVITE_BONUS = 20
+# Villages: a village is complete at 40 babies owned, not counting
+# leaders. Drifters, specials, rares, Shadows, and gods all count.
+VILLAGE_SIZE = 40
+# Pop-up tiers: the weekly drifter plus limited-edition specials and
+# rares, and the weekly Shadow pop-up (a money purchase in the Shop).
+PRICE_SPECIAL = "4.99"
+SPECIAL_EDITION = 25
+PRICE_RARE = "9.99"
+RARE_EDITION = 8
+PRICE_SHADOW = "10.00"
 POINTS_PACK_PRICES = {n: p for n, p in POINTS_PACKS}
 
 # ---------------------------------------------------------------- PayPal
@@ -402,7 +434,7 @@ def init_db():
         username TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
         salt TEXT NOT NULL,
-        points INTEGER NOT NULL DEFAULT 300,
+        points INTEGER NOT NULL DEFAULT 600,
         points_earned INTEGER NOT NULL DEFAULT 0,
         creator_slots_used INTEGER NOT NULL DEFAULT 0,
         invite_code TEXT UNIQUE NOT NULL,
@@ -551,13 +583,14 @@ def init_db():
         for text in (
             "The First Beginnings collection is live — the first hoodie "
             "babies have arrived.",
-            "Damiana June, leader of the Blues, is available — found in "
-            "the sea.",
-            "Aaliyah Bee, leader of the Browns, is available — found in "
-            "the woods.",
-            "Jazmyn, leader of the Reds, is available — found in the sky.",
-            "The Blues have arrived — Marina, Coral, Pearl, Tide, and Kai, "
-            "found by the sea.",
+            "Damiana June, leader of the Waterliewaveminans, is "
+            "available — found in the sea.",
+            "Aaliyah Bee, leader of the Fortress Rooted, is available — "
+            "found in the woods.",
+            "Jazmyn, leader of the Windyworrors, is available — found "
+            "in the sky.",
+            "The Waterliewaveminans have arrived — Marina, Coral, Pearl, "
+            "Tide, and Kai, found by the sea.",
         ):
             con.execute("INSERT INTO notices (text) VALUES (?)", (text,))
     # System account that owns the weekly Black sale listing.
@@ -598,6 +631,30 @@ def init_db():
     for g in GODS:
         con.execute("UPDATE gods SET name=? WHERE cert=?",
                     (g["name"], g["cert"]))
+    # Migration for pop-up tiers: popup_items gains a tier (drifter /
+    # special / rare / shadow) and a stock count (copies left) plus the
+    # edition total. Existing rows are all weekly drifters (one copy).
+    popup_cols = [r[1] for r in
+                  con.execute("PRAGMA table_info(popup_items)").fetchall()]
+    for col, ddl in (("tier", "TEXT DEFAULT 'drifter'"),
+                     ("stock", "INTEGER DEFAULT 1"),
+                     ("total", "INTEGER DEFAULT 1")):
+        if col not in popup_cols:
+            con.execute("ALTER TABLE popup_items ADD COLUMN %s %s"
+                        % (col, ddl))
+    con.execute("UPDATE popup_items SET stock=0 WHERE sold=1")
+    # Migration for the tribe renames: rewrite old tribe names in the
+    # Notices board so no user-facing page still shows them.
+    for old, new in (("Blacks", "Shadows"),
+                     ("Blues", "Waterliewaveminans"),
+                     ("Browns", "Fortress Rooted"),
+                     ("Reds", "Windyworrors")):
+        con.execute("UPDATE notices SET text=REPLACE(text, ?, ?)",
+                    (old, new))
+    con.execute("UPDATE notices SET text=REPLACE(text, "
+                "'A Black has popped up', 'A Shadow has popped up')")
+    con.execute("UPDATE notices SET text=REPLACE(text, "
+                "'A Black was caught', 'A Shadow was caught')")
     con.commit()
     con.close()
 
@@ -703,24 +760,34 @@ def grant_purchase(con, pur, user_id):
                     (item["id"],))
         return (True, "individual", item["name"], item["cert"], 0)
     if item_type == "popup":
+        # Edition stock: drifters and Shadows are one copy (the baby
+        # keeps the listing cert); specials and rares have many copies,
+        # each baby getting the listing cert plus a copy number. The
+        # listing is gone once stock hits 0.
         item = con.execute(
-            "SELECT * FROM popup_items WHERE cert=? AND sold=0",
+            "SELECT * FROM popup_items WHERE cert=? AND stock>0",
             (ref,)).fetchone()
         if not item:
             return (False, "popup", "", "",
-                    "That pop-up color was already sold — nothing was "
+                    "That pop-up was already sold — nothing was "
                     "granted.")
+        total = item["total"] or 1
+        stock = item["stock"] or 0
+        copy_no = total - stock + 1
+        baby_cert = (item["cert"] if total <= 1
+                     else "%s-%02d" % (item["cert"], copy_no))
         con.execute(
             "INSERT INTO babies (cert, owner_id, name, tribe,"
             " hoodie_pattern, stones, face, gender) VALUES (?,?,?,?,?,?,?,?)",
-            (item["cert"], user_id, item["name"], item["tribe"],
+            (baby_cert, user_id, item["name"], item["tribe"],
              item["hoodie_pattern"], item["stones"], item["face"],
              baby_gender(item["tribe"], item["hoodie_pattern"],
                          item["stones"], name=item["name"],
-                         cert=item["cert"])))
-        con.execute("UPDATE popup_items SET sold=1 WHERE id=?",
-                    (item["id"],))
-        return (True, "popup", item["name"], item["cert"], 0)
+                         cert=baby_cert)))
+        new_stock = stock - 1
+        con.execute("UPDATE popup_items SET stock=?, sold=? WHERE id=?",
+                    (new_stock, 1 if new_stock <= 0 else 0, item["id"]))
+        return (True, "popup", item["name"], baby_cert, 0)
     if item_type == "leader":
         ld = con.execute(
             "SELECT * FROM leaders WHERE cert=? AND sold=0",
@@ -779,41 +846,31 @@ def add_notice(con, text):
     con.execute("INSERT INTO notices (text) VALUES (?)", (text,))
 
 
-def weekly_black_cert():
-    import datetime
-    today = datetime.date.today()
-    iso_year, iso_week, _ = today.isocalendar()
-    return "EHB-BLK-%d-W%02d" % (iso_year, iso_week), iso_week
+def weekly_shadow_cert():
+    iso_year, iso_week = current_iso_week()
+    return "EHB-SHD-%d-W%02d" % (iso_year, iso_week)
 
 
-def ensure_weekly_black(con):
-    """One Black pops up for sale each week; only the current one is listed.
-
-    The weekly Black belongs to the system 'underground' account and is
-    listed on the Trade Board. Older weekly Blacks stop being listed.
-    """
-    cert, week = weekly_black_cert()
-    shop = con.execute(
-        "SELECT id FROM users WHERE username='underground'").fetchone()
-    if not shop:
+def ensure_weekly_shadow(con):
+    """One Shadow pops up in the Shop each week as a $10.00 money
+    purchase (PayPal or Cash App Pay, like any shop buy). This replaces
+    the old Underground points-offer listing on the Trade Board: player
+    to player, Shadows still trade under the 1,200-point gate."""
+    cert = weekly_shadow_cert()
+    if con.execute("SELECT 1 FROM popup_items WHERE cert=?",
+                   (cert,)).fetchone():
         return
-    shop_id = shop["id"]
-    con.execute("UPDATE babies SET for_trade=0 WHERE tribe='Blacks' "
-                "AND owner_id=? AND cert != ?", (shop_id, cert))
-    if not con.execute("SELECT 1 FROM babies WHERE cert=?",
-                       (cert,)).fetchone():
-        pick = BLACKS_ROSTER[week % len(BLACKS_ROSTER)]
-        con.execute(
-            "INSERT INTO babies (cert, owner_id, name, tribe, hoodie_pattern,"
-            " stones, face, for_trade, gender) VALUES (?,?,?,?,?,?,?,?,?)",
-            (cert, shop_id, pick["name"], "Blacks", pick["pattern"],
-             BLACK_STONES, BLACK_FACE, 1, "male"))
-        add_notice(con, "A Black has popped up for sale — found underground.")
-    else:
-        # Only re-list while the Underground still owns it: once a Black
-        # is caught, it must stay off the board.
-        con.execute("UPDATE babies SET for_trade=1 WHERE cert=? "
-                    "AND owner_id=?", (cert, shop_id))
+    _, iso_week = current_iso_week()
+    pick = BLACKS_ROSTER[iso_week % len(BLACKS_ROSTER)]
+    con.execute(
+        "INSERT INTO popup_items (cert, name, tribe, hoodie_pattern,"
+        " stones, face, price, tier, stock, total)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (cert, pick["name"], "Blacks", pick["pattern"], BLACK_STONES,
+         BLACK_FACE, PRICE_SHADOW, "shadow", 1, 1))
+    add_notice(con, "A Shadow has popped up in the Shop — %s with %s, "
+               "found underground. $%s." % (pick["name"], pick["pattern"],
+                                            PRICE_SHADOW))
     con.commit()
 
 # ---------------------------------------------------------------- deals, gifts, pop-ups, ownership, gender
@@ -869,6 +926,17 @@ def gender_marker(gender):
     return ""
 
 
+def stone_count(tribe, cert=None, name=None):
+    """Rhinestones on a hoodie: gods carry 15, leaders 10, every
+    villager 5 — drifters, specials, rares, and Shadows count as
+    villagers. Colors are unchanged; only the counts are fixed."""
+    if tribe == "Gods":
+        return 15
+    if cert in _LEADER_CERT_SET or name in _LEADER_NAME_SET:
+        return 10
+    return 5
+
+
 def current_iso_week():
     today = datetime.date.today()
     iso_year, iso_week, _ = today.isocalendar()
@@ -908,10 +976,11 @@ def weekly_popup_cert():
 
 
 def ensure_weekly_popup(con):
-    """One new color variant pops up in the Shop each week, plus a
-    notice saying what popped up and where it was found. Only the
-    current week's pop-up is listed for sale. The tribe rotation reads
-    STARTERS, so a tribe added there later joins automatically."""
+    """One new color variant pops up in the Shop each week — the
+    regular pop-up, now called a drifter ($1.99) — plus a notice saying
+    what popped up and where it was found. Only the current week's
+    pop-up is listed for sale. The tribe rotation reads STARTERS, so a
+    tribe added there later joins automatically."""
     cert = weekly_popup_cert()
     if con.execute("SELECT 1 FROM popup_items WHERE cert=?",
                    (cert,)).fetchone():
@@ -928,13 +997,79 @@ def ensure_weekly_popup(con):
     name = STARTERS[tribe]["names"][iso_week % len(STARTERS[tribe]["names"])]
     con.execute(
         "INSERT INTO popup_items (cert, name, tribe, hoodie_pattern,"
-        " stones, face, price) VALUES (?,?,?,?,?,?,?)",
+        " stones, face, price, tier, stock, total)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?)",
         (cert, name, tribe, pattern, stones, STARTERS[tribe]["face"],
-         PRICE_INDIVIDUAL))
-    add_notice(con, "A new %s color popped up in the Shop — %s with %s, "
-               "found %s." % (tribe, pattern, stones,
-                              POPUP_FOUND.get(tribe, "somewhere new")))
+         PRICE_INDIVIDUAL, "drifter", 1, 1))
+    add_notice(con, "A new %s drifter popped up in the Shop — %s with "
+               "%s, found %s." % (tribe_display(tribe), pattern, stones,
+                                  POPUP_FOUND.get(tribe, "somewhere new")))
     con.commit()
+
+
+def weekly_special_cert():
+    iso_year, iso_week = current_iso_week()
+    return "EHB-SP-%d-W%02d" % (iso_year, iso_week)
+
+
+def weekly_rare_cert():
+    iso_year, iso_week = current_iso_week()
+    return "EHB-R-%d-W%02d" % (iso_year, iso_week)
+
+
+def _ensure_weekly_tier_popup(con, cert, tier, price, edition, offset,
+                              kind_word):
+    """One limited-edition pop-up release per week: a special ($4.99,
+    25 copies) or a rare ($9.99, 8 copies). Same rotation as drifters,
+    offset so the tier's tribe and variant differ from the drifter's.
+    Only the current week's release is listed; unsold copies stop being
+    listed next week, like drifters."""
+    if con.execute("SELECT 1 FROM popup_items WHERE cert=?",
+                   (cert,)).fetchone():
+        return
+    tribes = list(STARTERS)
+    _, iso_week = current_iso_week()
+    idx = iso_week + offset
+    tribe = tribes[idx % len(tribes)]
+    variants = POPUP_VARIANTS.get(tribe, [])
+    if variants:
+        pattern, stones = variants[idx % len(variants)]
+    else:
+        pattern = STARTERS[tribe]["patterns"][0]
+        stones = STARTERS[tribe]["stones"]
+    name = STARTERS[tribe]["names"][idx % len(STARTERS[tribe]["names"])]
+    con.execute(
+        "INSERT INTO popup_items (cert, name, tribe, hoodie_pattern,"
+        " stones, face, price, tier, stock, total)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (cert, name, tribe, pattern, stones, STARTERS[tribe]["face"],
+         price, tier, edition, edition))
+    add_notice(con, "A %s pop-up appeared in the Shop — %s (%s) with "
+               "%s, found %s. Only %d in this edition, $%s."
+               % (kind_word, pattern, tribe_display(tribe), stones,
+                  POPUP_FOUND.get(tribe, "somewhere new"), edition,
+                  price))
+    con.commit()
+
+
+def ensure_weekly_special(con):
+    _ensure_weekly_tier_popup(con, weekly_special_cert(), "special",
+                              PRICE_SPECIAL, SPECIAL_EDITION, 1,
+                              "special")
+
+
+def ensure_weekly_rare(con):
+    _ensure_weekly_tier_popup(con, weekly_rare_cert(), "rare",
+                              PRICE_RARE, RARE_EDITION, 2, "rare")
+
+
+def ensure_weekly_popups(con):
+    """Make sure all four weekly pop-up listings exist: the drifter,
+    the special, the rare, and the Shadow."""
+    ensure_weekly_popup(con)
+    ensure_weekly_special(con)
+    ensure_weekly_rare(con)
+    ensure_weekly_shadow(con)
 
 
 def tribe_leader_cert(con, tribe):
@@ -972,6 +1107,18 @@ def tribe_standings(con, tribe):
     second = others[0] if len(others) > 0 else None
     third = others[1] if len(others) > 1 else None
     return owner, second, third
+
+
+def village_progress(con, user_id):
+    """(baby count, leader names) for a player's village: every baby
+    owned except leaders counts, and the village is complete at 40."""
+    count = con.execute(
+        "SELECT COUNT(*) FROM babies WHERE owner_id=? AND cert NOT IN "
+        "(SELECT cert FROM leaders)", (user_id,)).fetchone()[0]
+    leaders = con.execute(
+        "SELECT name FROM babies WHERE owner_id=? AND cert IN "
+        "(SELECT cert FROM leaders)", (user_id,)).fetchall()
+    return count, [r["name"] for r in leaders]
 
 
 def user_owned_tribes(con, user_id):
@@ -1049,7 +1196,12 @@ def page(title, body, user=None):
             "margin:10px 0} .tag{display:inline-block;background:#eef;"
             "border-radius:6px;padding:2px 8px;margin-right:6px}"
             ".ok{color:green} .err{color:red}"
-            "</style></head><body>%s<h1>%s</h1>%s</body></html>"
+            "</style></head><body>%s<h1>%s</h1>%s"
+            "<footer style='margin-top:24px;padding-top:12px;"
+            "border-top:1px solid #ccc;font-size:13px;color:#444'>"
+            "Note: the original Hoodie Babies figure will not be released "
+            "until further notice — but actual, physical Hoodie Babies "
+            "are coming. Nothing is set in stone yet.</footer></body></html>"
             % (esc(title), nav, esc(title), body))
 
 
@@ -1099,7 +1251,7 @@ def _bget(b, key, default=""):
 
 def _stone_colors(stones_text, tribe):
     """Rhinestone colors for a baby: parsed from its stored stones text,
-    falling back to the tribe default. Blacks always get black stones
+    falling back to the tribe default. Shadows always get black stones
     on their white hoodies; Jazmyn-style 'every different color' gets
     the rainbow."""
     if tribe == "Blacks":
@@ -1158,7 +1310,7 @@ def portrait_svg(b, size=120):
 
     b needs name, cert, tribe, hoodie_pattern, stones, face. Faces
     follow Doneil's final specs: Blues fish-like, Browns animal-like,
-    Reds angel-like, Blacks angry creature-like, with the three
+    Reds angel-like, Shadows angry creature-like, with the three
     leaders' signature looks and grander crowned portraits for gods.
     """
     name = _bget(b, "name")
@@ -1314,18 +1466,28 @@ def portrait_svg(b, size=120):
                      "stroke-width='3'/>")
         parts.append("<circle cx='98' cy='69' r='6' fill='#FF3B1F'/>")
         parts.append("<circle cx='98' cy='69' r='2.5' fill='#FF9800'/>")
-    # Rhinestones on the hoodie, placed per certificate.
-    slots = [(42, 94), (60, 90), (78, 94), (48, 114), (72, 114)]
-    rnd.shuffle(slots)
-    n_stones = rnd.choice([3, 4, 5])
-    for i, (sx, sy) in enumerate(slots[:n_stones]):
+    # The hoodie's own back design, from its stored pattern.
+    parts.append(_motif(pattern, "#FFFFFF" if hoodie != "#FFFFFF" else "#888888",
+                        hoodie))
+    # Rhinestones on the hoodie: gods 15, leaders 10, villagers 5.
+    # Villagers keep their per-certificate shuffled slots; leaders and
+    # gods get full rows so the count is exact.
+    is_leader = is_damiana or is_aaliyah or is_jazmyn
+    if is_god:
+        rows = [(38, 88), (50, 88), (62, 88), (74, 88), (86, 88),
+                (38, 106), (50, 106), (62, 106), (74, 106), (86, 106),
+                (38, 124), (50, 124), (62, 124), (74, 124), (86, 124)]
+    elif is_leader:
+        rows = [(38, 88), (50, 88), (62, 88), (74, 88), (86, 88),
+                (38, 106), (50, 106), (62, 106), (74, 106), (86, 106)]
+    else:
+        rows = [(42, 94), (60, 90), (78, 94), (48, 114), (72, 114)]
+        rnd.shuffle(rows)
+    for i, (sx, sy) in enumerate(rows):
         col = stones[i % len(stones)]
         parts.append("<rect x='%d' y='%d' width='7' height='7' fill='%s' "
                      "stroke='#00000033' transform='rotate(45 %d %d)'/>"
                      % (sx - 3, sy - 3, col, sx, sy))
-    # The hoodie's own back design, from its stored pattern.
-    parts.append(_motif(pattern, "#FFFFFF" if hoodie != "#FFFFFF" else "#888888",
-                        hoodie))
     # Certificate number under the portrait.
     parts.append("<text x='60' y='145' text-anchor='middle' font-size='8.5' "
                  "font-family='sans-serif' fill='#333333'>%s</text>"
@@ -1368,9 +1530,11 @@ def baby_card(b, owner_name=None, show_owner=False):
            "<span class='tag'>%s</span><br>" % (
                baby_img_html(b), esc(b["name"]),
                gender_marker(_bget(b, "gender", "")),
-               esc(b["cert"]), esc(b["tribe"])))
-    out += "Hoodie: %s<br>Rhinestones: %s<br>Face: %s<br>" % (
-        esc(b["hoodie_pattern"]), esc(b["stones"]), esc(b["face"]))
+               esc(b["cert"]), esc(tribe_display(b["tribe"]))))
+    out += ("Hoodie: %s<br>Rhinestones: %s<br>Stones: %d<br>Face: %s<br>"
+            % (esc(b["hoodie_pattern"]), esc(b["stones"]),
+               stone_count(b["tribe"], _bget(b, "cert"),
+                           _bget(b, "name")), esc(b["face"])))
     if b["tribe"] == "Blacks":
         out += "Eyes: Diamond<br>"
     if b["is_custom"]:
@@ -1379,7 +1543,129 @@ def baby_card(b, owner_name=None, show_owner=False):
         out += "<span class='tag'>for trade</span> "
     if show_owner and owner_name:
         out += "<br>Owner: %s" % esc(owner_name)
+    out += ("<br><a href='/baby/%s'>View baby — zoom &amp; spin</a>"
+            % esc(b["cert"]))
     return out + "</div>"
+
+
+# ---------------------------------------------------------------- baby detail viewer
+# One baby, blown up: a fullscreen-zoomable front view plus a
+# drag-to-spin viewer. HONEST LIMIT: each baby has only one photo
+# today, so a true photo spin is not possible yet. The spin therefore
+# has two views — the front photo (or SVG portrait) and a "Back /
+# details" card with the exact back-design specs (pattern, stone
+# colors and count, tribe, certificate). The back view is labeled as
+# a details card, never presented as a photo. Views are a list, so
+# real side / back photos can be appended later without rework. No
+# AI-generated side/back angles: they would not match the front
+# exactly, which would misrepresent a 1-of-1 baby.
+MAKE_IT_REAL_NOTE = (
+    "1-of-1 — when physical figures launch, this exact character "
+    "(pattern, stones, colors, certificate) can be sent in to be made "
+    "real, exactly as it appears online.")
+
+
+def resolve_baby(con, cert):
+    """Find one character by certificate: an owned baby first, then a
+    shop listing (individual, pop-up, leader, god). Returns a plain
+    dict of the baby's attributes, or None."""
+    row = con.execute(
+        "SELECT * FROM babies WHERE cert=?", (cert,)).fetchone()
+    if row:
+        return dict(row)
+    for table in ("shop_items", "popup_items", "leaders"):
+        row = con.execute(
+            "SELECT * FROM %s WHERE cert=?" % table, (cert,)).fetchone()
+        if row:
+            return dict(row)
+    row = con.execute(
+        "SELECT * FROM gods WHERE cert=?", (cert,)).fetchone()
+    if row:
+        return {"name": row["name"], "cert": row["cert"],
+                "tribe": "Gods", "hoodie_pattern": "God Crown",
+                "stones": "gold rhinestones", "face": "grand",
+                "gender": "male", "is_custom": 0, "for_trade": 0}
+    return None
+
+
+def baby_detail_views(b):
+    """Spin-viewer views for one baby, in order. Each view is
+    (view_id, label, html). Appending a real side/back photo later is
+    one more tuple — no viewer rework needed."""
+    front = baby_img_html(b, 320)
+    stones = _stone_colors(_bget(b, "stones"), _bget(b, "tribe"))
+    dots = "".join(
+        "<span style='display:inline-block;width:18px;height:18px;"
+        "border-radius:50%%;background:%s;border:1px solid #999;"
+        "margin-right:4px'></span>" % c for c in stones)
+    back = (
+        "<div class='card'><h2>Back view — details card</h2>"
+        "<p>This is not a photo of the back yet — each baby has one "
+        "photo today. This card records the exact back-design specs, "
+        "so the 1-of-1 design is on record until side and back photos "
+        "are added here.</p>"
+        "<p>Hoodie pattern: <b>%s</b><br>"
+        "Rhinestones: %s<br>Stone colors: %s<br>"
+        "Stones on hoodie: <b>%d</b><br>"
+        "Tribe: <b>%s</b><br>Face: %s<br>"
+        "Certificate (1-of-1): <b>%s</b></p></div>" % (
+            esc(_bget(b, "hoodie_pattern")), esc(_bget(b, "stones")),
+            dots,
+            stone_count(_bget(b, "tribe"), _bget(b, "cert"),
+                        _bget(b, "name")),
+            esc(tribe_display(_bget(b, "tribe"))),
+            esc(_bget(b, "face")), esc(_bget(b, "cert"))))
+    return [("front", "Front view", front),
+            ("back", "Back view — details", back)]
+
+
+def popup_shop_section(con, cert, heading, user):
+    """One pop-up listing card for the Shop (drifter, special, rare,
+    or Shadow): photo/SVG, tribe, hoodie, stones, price, edition stock
+    when there is more than one copy, and both buy buttons. Empty when
+    the listing is sold out."""
+    item = con.execute(
+        "SELECT * FROM popup_items WHERE cert=? AND stock>0",
+        (cert,)).fetchone()
+    if not item:
+        return ""
+    stock_line = ""
+    if (item["total"] or 1) > 1:
+        stock_line = ("<br>Only %d of %d left in this edition"
+                      % (item["stock"], item["total"]))
+    out = ("<h2>%s</h2><div class='card'><div style='text-align:center'>"
+           "%s</div><b>%s</b> %s "
+           "<span class='tag'>%s</span> "
+           "<span class='tag'>%s</span><br>"
+           "Hoodie: %s<br>Rhinestones: %s<br>Stones: %d<br>Face: %s<br>"
+           "Price: $%s%s<br><a href='/baby/%s'>View baby — zoom "
+           "&amp; spin</a></div>" % (
+               heading, baby_img_html(item),
+               esc(item["name"]),
+               gender_marker(baby_gender(item["tribe"],
+                                         item["hoodie_pattern"],
+                                         item["stones"],
+                                         name=item["name"],
+                                         cert=item["cert"])),
+               esc(item["cert"]), esc(tribe_display(item["tribe"])),
+               esc(item["hoodie_pattern"]), esc(item["stones"]),
+               stone_count(item["tribe"], item["cert"], item["name"]),
+               esc(item["face"]), esc(item["price"]), stock_line,
+               esc(item["cert"])))
+    if user:
+        out += ("<form method='post' action='/buy_popup'>"
+                "<input type='hidden' name='popup_id' "
+                "value='%d'><button>Buy for $%s with "
+                "PayPal</button></form>"
+                "<form method='post' action='/buy_popup_stripe'>"
+                "<input type='hidden' name='popup_id' "
+                "value='%d'><button>Buy for $%s with "
+                "Cash App Pay</button></form>"
+                % (item["id"], item["price"],
+                   item["id"], item["price"]))
+    else:
+        out += "<p><a href='/login'>Log in</a> to buy.</p>"
+    return out
 
 # ---------------------------------------------------------------- handler
 class Handler(BaseHTTPRequestHandler):
@@ -1555,6 +1841,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.create_form(con, user)
             elif path == "/choice_baby":
                 self.choice_baby_form(con, user)
+            elif path.startswith("/baby/"):
+                self.baby_detail(con, user, path[6:])
             elif path.startswith("/img/"):
                 self.serve_img(path[5:])
             else:
@@ -1638,8 +1926,9 @@ class Handler(BaseHTTPRequestHandler):
         platform for small 3-inch hoodie babies. Every hoodie is 1-of-1:
         no two are the same, and that's what makes the trade better.</p>
         <p>Join and you get <b>one free hoodie baby</b> and
-        <b>300 points</b>. You pick the tribe you join (Blues, Browns,
-        or Reds), then choose your free character from that tribe and
+        <b>600 points</b>. You pick the tribe you join
+        (Waterliewaveminans, Fortress Rooted, or Windyworrors), then
+        choose your free character from that tribe and
         name it yourself. Every completed trade is worth 20 points, and
         every 300 points earned unlocks adding your own character.</p>"""
         if user:
@@ -1681,7 +1970,7 @@ class Handler(BaseHTTPRequestHandler):
                  "each unique), individual characters $%s, gods $%s "
                  "(only %d gods, and their trades are almost impossible). "
                  "Everyone is free to purchase a leader. Points packs: "
-                 "300 for $1.99, 600 for $3.99, 900 for $9.99, 1,200 for "
+                 "300 for $4.99, 600 for $9.99, 1,200 for "
                  "$20.00 — also in the Shop. Checkout runs in test mode "
                  "with PayPal or Cash App Pay — no real money moves.</p>"
                  "<p>Trade slots: at most 1 pending offer at once for a "
@@ -1695,8 +1984,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_html(page("Escamo Hoodie Babies Trade", body, user))
 
     def world(self, con, user):
-        ensure_weekly_black(con)
-        ensure_weekly_popup(con)
+        ensure_weekly_popups(con)
         standings = ""
         for tribe, leader in (("Blues", "Damiana June"),
                               ("Browns", "Aaliyah Bee"),
@@ -1704,55 +1992,59 @@ class Handler(BaseHTTPRequestHandler):
             owner, second, third = tribe_standings(con, tribe)
             standings += ("<div class='card'><b>%s tribe standings</b>"
                           "<br>Owner: %s<br>Second: %s<br>Third: %s</div>"
-                          % (esc(tribe),
+                          % (esc(tribe_display(tribe)),
                              esc(owner) if owner else
                              "none yet — buy %s in the Shop" % leader,
                              esc(second) if second else "—",
                              esc(third) if third else "—"))
         standings += ("<div class='card'>Whoever buys a tribe's leader "
-                      "owns that tribe — Damiana June owns the Blues, "
-                      "Aaliyah Bee owns the Browns, Jazmyn owns the "
-                      "Reds. Trade the leader away and ownership passes "
-                      "to the new holder. Second and Third are the two "
-                      "other holders with the most babies of that tribe "
-                      "— titles only, no extra perks.</div>")
+                      "owns that tribe — Damiana June owns the "
+                      "Waterliewaveminans, Aaliyah Bee owns the Fortress "
+                      "Rooted, Jazmyn owns the Windyworrors. Trade the "
+                      "leader away and ownership passes to the new "
+                      "holder. Second and Third are the two other "
+                      "holders with the most babies of that tribe — "
+                      "titles only, no extra perks.</div>")
         body = """
-        <div class='card'><b>Blues — rulers over water</b><br>
+        <div class='card'><b>Waterliewaveminans — rulers over water</b><br>
         Led by <b>Damiana June</b>, Controller of Water. Blue slanted eyes,
         fish-like face with a surprised crying look. The rare one of her
-        tribe — purchasable when the platform goes live. The Blues run the
-        sea and have only five characters, not including her: Marina,
-        Coral, Pearl, Tide, and Kai. Blues carry sea and ocean names, and
-        their faces are fish-like.</div>
-        <div class='card'><b>Browns — rulers of the forest</b><br>
+        tribe — purchasable when the platform goes live. The
+        Waterliewaveminans run the sea and have only five characters, not
+        including her: Marina, Coral, Pearl, Tide, and Kai. They carry sea
+        and ocean names, and their faces are fish-like.</div>
+        <div class='card'><b>Fortress Rooted — rulers of the forest</b><br>
         Led by <b>Aaliyah Bee</b>, ruler of the woods, keeper of the woods
         and animals, with a red stone in the middle of her forehead.
-        Browns have a more animal-like face, and Aaliyah Bee's is
+        Fortress Rooted have a more animal-like face, and Aaliyah Bee's is
         animal-looking and grouchy.</div>
-        <div class='card'><b>Reds — rulers of the sky</b><br>
+        <div class='card'><b>Windyworrors — rulers of the sky</b><br>
         Led by <b>Jazmyn</b>, ruler of the sky. Although she leads the
-        Reds, she is more powerful than the other controllers. Glowing
-        diamond head, black eyes, all-black hoodie with stones of every
-        different color, hoodie over her face, wand with a fire-red tip.
-        Reds have more angel-like faces, and Jazmyn's is angel-looking
-        with a slight curious smile. Jazmyn is the elder of them all, the
-        first hoodie baby to arrive.</div>
-        <div class='card'><b>Blacks — the Miners</b><br>
-        The Blacks ARE the Miners. There is no ruler: they are scavengers,
-        underground-raised, and they just pop up out of anywhere. They mean
-        no harm, but they are out to get what they can to go back
-        underground — they are the protectors, so catch them as they pop
-        up. All Blacks carry Diamond eyes and all-white hoodies with black
-        stones, and their faces are angry creature-like. Once a week, one
-        Black pops up for sale on the Trade Board. Trading for a Black
-        starts at 1,200 points, and the Underground auto-accepts the
-        first qualifying offer.</div>
+        Windyworrors, she is more powerful than the other controllers.
+        Glowing diamond head, black eyes, all-black hoodie with stones of
+        every different color, hoodie over her face, wand with a fire-red
+        tip. Windyworrors have more angel-like faces, and Jazmyn's is
+        angel-looking with a slight curious smile. Jazmyn is the elder of
+        them all, the first hoodie baby to arrive.</div>
+        <div class='card'><b>Shadows — the protectors</b><br>
+        The Shadows have no leader: they are protectors, underground-raised,
+        and they just pop up out of anywhere. They mean no harm, but they
+        are out to get what they can to go back underground. All Shadows
+        carry Diamond eyes and all-white hoodies with black stones, and
+        their faces are angry creature-like. Once a week, one Shadow pops
+        up in the Shop for $10.00. Trading for a Shadow between players
+        starts at 1,200 points.</div>
         <div class='card'><b>The 3 Gods — over everyone</b><br>
         There are only 3 gods, and they are over everyone. Purchase:
         $40.00 each — buy one in the <a href='/shop'>Shop</a> with
         PayPal or Cash App Pay (test mode, no real money moves).
         Their trades are almost impossible — but don't get discouraged:
         more gods will arrive over new tribes.</div>
+        <div class='card'><b>Stones on every hoodie</b><br>
+        Gods' hoodies carry 15 rhinestones, leaders' hoodies carry 10,
+        and every villager's hoodie carries 5 — drifters, specials,
+        rares, and Shadows included. The colors stay the same; only the
+        counts are fixed.</div>
         <div class='card'><b>Prices</b><br>
         Leaders: $10.00 to purchase, and everyone is free to purchase a
         leader — buy one in the <a href='/shop'>Shop</a>, choosing 1 of
@@ -1792,17 +2084,17 @@ class Handler(BaseHTTPRequestHandler):
         Password: <input type='password' name='password' required><br>
         Pick your tribe:<br>
         <label><input type='radio' name='tribe' value='Blues' required>
-        Blues — rulers over water</label><br>
+        Waterliewaveminans — rulers over water</label><br>
         <label><input type='radio' name='tribe' value='Browns' required>
-        Browns — rulers of the forest</label><br>
+        Fortress Rooted — rulers of the forest</label><br>
         <label><input type='radio' name='tribe' value='Reds' required>
-        Reds — rulers of the sky</label><br>
+        Windyworrors — rulers of the sky</label><br>
         Invite code (optional): <input name='invite_code' value='%s'><br>
         <button>Continue</button></form>
-        <p>Every new account gets one free hoodie baby and 300 points.
+        <p>Every new account gets one free hoodie baby and 600 points.
         On the next step you choose your free character from your
-        tribe and name it yourself. Blacks are not a starter tribe —
-        they are the rare Miners, found through the weekly sale.</p>
+        tribe and name it yourself. Shadows are not a starter tribe —
+        they are the protectors, found through pop-ups in the Shop.</p>
         """ % invite
         self.send_html(page("Sign up", body))
 
@@ -1828,8 +2120,9 @@ class Handler(BaseHTTPRequestHandler):
         .value = this.value; });</script>
         <p>Your free baby comes with your tribe's hoodie pattern,
         rhinestones, and face — and your account starts with
-        300 points.</p>
-        """ % (esc(tribe), esc(pending["token"]), opts, esc(names[0]))
+        600 points.</p>
+        """ % (esc(tribe_display(tribe)), esc(pending["token"]), opts,
+               esc(names[0]))
         self.send_html(page("Choose your hoodie baby", body))
 
     def login_form(self, msg=""):
@@ -1884,11 +2177,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if tribe not in STARTERS:
             # STARTERS holds exactly the joinable tribes (Blues, Browns,
-            # Reds). Blacks are the rare Miners and are not joinable.
+            # Reds). Shadows are the protectors and are not joinable.
             rate_record_fail(key)
             self.signup_form(
-                {}, "<p class='err'>Please pick a tribe to join: Blues, "
-                "Browns, or Reds.</p>")
+                {}, "<p class='err'>Please pick a tribe to join: "
+                "Waterliewaveminans, Fortress Rooted, or Windyworrors."
+                "</p>")
             return
         if con.execute("SELECT 1 FROM users WHERE username=?",
                        (username,)).fetchone():
@@ -1963,15 +2257,26 @@ class Handler(BaseHTTPRequestHandler):
                 {}, "<p class='err'>That username is taken.</p>")
             return
         code = new_invite_code(con)
+        # Points are set explicitly (not left to the column default) so
+        # new signups get 600 even on databases created before the
+        # starting-points change. Starting points never count toward
+        # the character-creator unlock.
         cur = con.execute(
             "INSERT INTO users (username, password_hash, salt, invite_code,"
-            " invited_by) VALUES (?,?,?,?,?)",
+            " invited_by, points) VALUES (?,?,?,?,?,?)",
             (username, pending["password_hash"], pending["salt"], code,
-             pending["invited_by"]))
+             pending["invited_by"], STARTING_POINTS))
         user_id = cur.lastrowid
         # The free baby is the chosen character with the chosen name,
         # using the tribe's default pattern, rhinestones, and face.
         mint_baby(con, user_id, tribe=tribe, name=baby_name)
+        # Invite bonus: the inviter gets +20 points, balance AND earned
+        # (invite bonuses are earned, not bought).
+        if pending["invited_by"]:
+            con.execute(
+                "UPDATE users SET points=points+?, points_earned="
+                "points_earned+? WHERE id=?",
+                (INVITE_BONUS, INVITE_BONUS, pending["invited_by"]))
         con.execute("DELETE FROM pending_signups WHERE token=?",
                     (token,))
         con.commit()
@@ -2007,6 +2312,130 @@ class Handler(BaseHTTPRequestHandler):
         self.set_session(token)
 
     # -- collection / trade board --
+    def baby_detail(self, con, user, cert):
+        """One baby, blown up: a fullscreen-zoomable front view, a
+        drag-to-spin viewer (front photo + back-details card until
+        real side/back photos exist), specs, and the Make-it-real
+        note. Public — anyone with the certificate link can view the
+        character; no owner info is shown."""
+        if not re.fullmatch(r"[A-Za-z0-9-]+", cert or ""):
+            self.send_html(page("Not found", "<p>Unknown baby.</p>",
+                                user), 404)
+            return
+        b = resolve_baby(con, cert)
+        if not b:
+            self.send_html(page("Not found", "<p>Unknown baby.</p>",
+                                user), 404)
+            return
+        views = baby_detail_views(b)
+        view_divs = "".join(
+            "<div class='spin-view' data-label='%s'>%s</div>"
+            % (esc(label), html) for _vid, label, html in views)
+        dots = "".join(
+            "<span class='spin-dot' data-i='%d' "
+            "style='cursor:pointer'>●</span> " % i
+            for i in range(len(views)))
+        body = (
+            "<p><a href='/me'>My Collection</a> | "
+            "<a href='/shop'>Shop</a> | "
+            "<a href='/browse'>Trade Board</a></p>"
+            "<div id='spin-stage' style='touch-action:pan-y;"
+            "text-align:center'>%s</div>"
+            "<p style='text-align:center'>"
+            "<button id='spin-prev' type='button'>◀ Turn</button> "
+            "<span id='spin-label'>%s</span> "
+            "<button id='spin-next' type='button'>Turn ▶</button>"
+            "<br>%s</p>"
+            "<p style='text-align:center'>"
+            "<button id='fs-open' type='button'>Blow it up "
+            "fullscreen</button></p>"
+            "<p>Drag left or right on the picture to spin it around. "
+            "Tap the front picture (or the button above) to blow it "
+            "up fullscreen — pinch to zoom on your phone or tablet, "
+            "or use the + / − buttons.</p>"
+            "<div id='fs-overlay' style='display:none;position:fixed;"
+            "inset:0;background:#000;z-index:9999;overflow:auto;"
+            "text-align:center'>"
+            "<div id='fs-wrap' style='display:inline-block'>%s</div>"
+            "<p><button id='fs-zoom-in' type='button'>+</button> "
+            "<button id='fs-zoom-out' type='button'>−</button> "
+            "<button id='fs-close' type='button'>Close</button></p>"
+            "</div>"
+            "<p>Hoodie: %s<br>Rhinestones: %s<br>Stones: %d<br>"
+            "Tribe: %s<br>Face: %s<br>Certificate: %s</p>"
+            "<div class='card'><b>Make it real</b><br>%s<br>"
+            "<small>This is just a note for now — there is nothing "
+            "to order or pay for yet; figures are not released "
+            "yet.</small></div>"
+            % (view_divs, esc(views[0][1]), dots,
+               baby_img_html(b, 640),
+               esc(_bget(b, "hoodie_pattern")), esc(_bget(b, "stones")),
+               stone_count(_bget(b, "tribe"), _bget(b, "cert"),
+                           _bget(b, "name")),
+               esc(tribe_display(_bget(b, "tribe"))),
+               esc(_bget(b, "face")), esc(_bget(b, "cert")),
+               esc(MAKE_IT_REAL_NOTE)))
+        body += (
+            "<script>(function(){"
+            "var stage=document.getElementById('spin-stage');"
+            "if(!stage) return;"
+            "var views=stage.querySelectorAll('.spin-view');"
+            "var label=document.getElementById('spin-label');"
+            "var dots=document.querySelectorAll('.spin-dot');"
+            "var n=views.length, angle=0, startX=null, dragged=false;"
+            "function show(){"
+            "var idx=((Math.floor(angle/(360/n))%n)+n)%n;"
+            "for(var i=0;i<n;i++){"
+            "views[i].style.display=(i===idx)?'block':'none';}"
+            "if(label) label.textContent="
+            "views[idx].getAttribute('data-label');"
+            "for(var j=0;j<dots.length;j++){"
+            "dots[j].style.opacity=(j===idx)?'1':'0.4';}}"
+            "function step(d){ angle+=d*(360/n); show(); }"
+            "document.getElementById('spin-prev').onclick="
+            "function(){ step(-1); };"
+            "document.getElementById('spin-next').onclick="
+            "function(){ step(1); };"
+            "for(var k=0;k<dots.length;k++){"
+            "(function(k){ dots[k].onclick=function(){"
+            "angle=k*(360/n); show(); }; })(k);}"
+            "stage.addEventListener('pointerdown',"
+            "function(e){ startX=e.clientX; dragged=false; });"
+            "stage.addEventListener('pointermove',"
+            "function(e){ if(startX===null) return;"
+            "var dx=e.clientX-startX;"
+            "if(Math.abs(dx)>8){ dragged=true; angle+=dx*0.5;"
+            "startX=e.clientX; show(); } });"
+            "addEventListener('pointerup',"
+            "function(){ startX=null; });"
+            "stage.style.cursor='grab';"
+            "var ov=document.getElementById('fs-overlay');"
+            "var wrap=document.getElementById('fs-wrap');"
+            "var scale=1;"
+            "function openFs(){ ov.style.display='block'; scale=1;"
+            "wrap.style.transform='scale(1)'; }"
+            "var front=views[0];"
+            "if(front) front.addEventListener('click',"
+            "function(){ if(dragged){ dragged=false; return; }"
+            "openFs(); });"
+            "document.getElementById('fs-open').onclick=openFs;"
+            "document.getElementById('fs-close').onclick="
+            "function(){ ov.style.display='none'; };"
+            "ov.addEventListener('click',function(e){"
+            "if(e.target===ov) ov.style.display='none'; });"
+            "document.getElementById('fs-zoom-in').onclick="
+            "function(e){ e.stopPropagation();"
+            "scale=Math.min(4,scale+0.5);"
+            "wrap.style.transform='scale('+scale+')'; };"
+            "document.getElementById('fs-zoom-out').onclick="
+            "function(e){ e.stopPropagation();"
+            "scale=Math.max(1,scale-0.5);"
+            "wrap.style.transform='scale('+scale+')'; };"
+            "show();"
+            "})();</script>")
+        self.send_html(page("%s — hoodie baby" % _bget(b, "name"),
+                             body, user))
+
     def me(self, con, user, query):
         if self.need_login(user):
             return
@@ -2021,6 +2450,23 @@ class Handler(BaseHTTPRequestHandler):
                     ("<b>UNLOCKED — <a href='/create'>add your own "
                      "character</a></b>" if slots >= 1
                      else "%d / 300 points earned" % user["points_earned"])))
+        # My Village: every baby owned except leaders counts, and the
+        # village is complete at 40. An owned leader is shown with it.
+        vcount, vleader_names = village_progress(con, user["id"])
+        body += ("<p><b>My Village: %d / %d</b>%s</p>" % (
+            vcount, VILLAGE_SIZE,
+            " — <b>Village complete!</b>" if vcount >= VILLAGE_SIZE
+            else ""))
+        if vleader_names:
+            body += ("<p>Village leader: %s</p>"
+                     % esc(", ".join(vleader_names)))
+        invites = con.execute(
+            "SELECT COUNT(*) FROM users WHERE invited_by=?",
+            (user["id"],)).fetchone()[0]
+        if invites:
+            body += ("<p>Invite bonus: +20 points × %d invite%s — "
+                     "friends who joined with your code.</p>"
+                     % (invites, "s" if invites != 1 else ""))
         body += ("<p>Your invite code: <b>%s</b><br>Share this link so "
                  "someone can join and trade with you:<br>"
                  "<code>/signup?invite=%s</code></p>" % (
@@ -2032,7 +2478,7 @@ class Handler(BaseHTTPRequestHandler):
             body += ("<p><b>You are the Owner of the %s tribe!</b> "
                      "Buying that tribe's leader made you its owner — "
                      "if you trade the leader away, ownership passes "
-                     "to the new holder.</p>" % esc(tribe))
+                     "to the new holder.</p>" % esc(tribe_display(tribe)))
         body += "<h2>My hoodie babies (%d)</h2>" % len(babies)
         for b in babies:
             body += baby_card(b)
@@ -2058,7 +2504,6 @@ class Handler(BaseHTTPRequestHandler):
     def browse(self, con, user):
         if self.need_login(user):
             return
-        ensure_weekly_black(con)
         mine = con.execute("SELECT * FROM babies WHERE owner_id=?",
                            (user["id"],)).fetchall()
         rows = con.execute(
@@ -2075,9 +2520,8 @@ class Handler(BaseHTTPRequestHandler):
         for b in rows:
             body += baby_card(b, b["owner"], show_owner=True)
             if b["tribe"] == "Blacks":
-                body += ("<p><b>Trading for a Black starts at 1,200 "
-                         "points.</b> The Underground auto-accepts the "
-                         "first qualifying offer.</p>")
+                body += ("<p><b>Trading for a Shadow starts at 1,200 "
+                         "points.</b></p>")
             opts = "".join(
                 "<option value='%d'>%s (%s)</option>"
                 % (m["id"], esc(m["name"]), esc(m["cert"])) for m in mine)
@@ -2107,7 +2551,7 @@ class Handler(BaseHTTPRequestHandler):
                                 (user["id"],)).fetchone()
             if fresh["points"] < BLACK_TRADE_MIN_POINTS:
                 self.send_html(page("Trade Board",
-                                     "<p class='err'>Trading for a Black "
+                                     "<p class='err'>Trading for a Shadow "
                                      "starts at 1,200 points — you have %d."
                                      "</p>" % fresh["points"], user))
                 return
@@ -2141,42 +2585,16 @@ class Handler(BaseHTTPRequestHandler):
                                  "<p class='err'>%s</p>"
                                  % cap_error(cap, pending), user))
             return
-        cur = con.execute(
+        con.execute(
             "INSERT INTO offers (from_user, to_user, offered_baby,"
             " offered_points, wanted_baby) VALUES (?,?,?,?,?)",
             (user["id"], wanted["owner_id"],
              offered_baby["id"] if offered_baby else None, pts, wanted["id"]))
-        offer_id = cur.lastrowid
         con.commit()
-        # Weekly Black sale: the Underground auto-accepts the first
-        # qualifying offer, so the buyer gets the Black immediately.
-        # The offered baby (if any) and offered points go to the
-        # Underground, and the sale completes at once — with 60 points
-        # earned for the Black catch (not the usual 20).
-        underground = con.execute(
-            "SELECT id FROM users WHERE username='underground'").fetchone()
-        if wanted["tribe"] == "Blacks" and underground and \
-                wanted["owner_id"] == underground["id"]:
-            offer = con.execute("SELECT * FROM offers WHERE id=?",
-                                (offer_id,)).fetchone()
-            self.accept_offer(con, offer)
-            done = con.execute("SELECT * FROM offers WHERE id=?",
-                               (offer_id,)).fetchone()
-            if done["status"] == "accepted":
-                add_notice(con, "A Black was caught by %s — found "
-                           "underground." % user["username"])
-                con.commit()
-                self.redirect("/offers")
-            else:
-                # Lost the race: the Black was already caught.
-                con.execute("UPDATE offers SET status='withdrawn' "
-                            "WHERE id=?", (offer_id,))
-                con.commit()
-                self.send_html(page("Trade Board",
-                                     "<p class='err'>Too late — that Black "
-                                     "was already caught. A new Black pops "
-                                     "up next week.</p>", user))
-            return
+        # Shadow trades between players go through the normal flow
+        # (accept / decline / counter) — the 1,200-point gate above is
+        # the only special rule, and acceptance still awards 60 points
+        # to the buyer instead of the usual 20.
         self.redirect("/offers")
 
     def offers(self, con, user):
@@ -2309,7 +2727,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def accept_offer(self, con, o):
         """Swap the babies, move points, award 20 points to each trader
-        (60 points to the buyer when the trade is for a Black)."""
+        (60 points to the buyer when the trade is for a Shadow)."""
         sender = con.execute("SELECT * FROM users WHERE id=?",
                              (o["from_user"],)).fetchone()
         receiver = con.execute("SELECT * FROM users WHERE id=?",
@@ -2336,7 +2754,7 @@ class Handler(BaseHTTPRequestHandler):
             con.execute("UPDATE babies SET owner_id=?, for_trade=0 "
                         "WHERE id=?", (o["to_user"], offered["id"]))
         # points: offered points move sender -> receiver, plus 20 each.
-        # A trade for a Black is worth 60 points to the buyer instead
+        # A trade for a Shadow is worth 60 points to the buyer instead
         # of 20; the Underground system account earns nothing.
         is_black_trade = wanted["tribe"] == "Blacks"
         underground = con.execute(
@@ -2382,7 +2800,9 @@ class Handler(BaseHTTPRequestHandler):
         <form method='post' action='/create_character'>
         Name: <input name='name' required><br>
         Tribe: <select name='tribe'>
-        <option>Blues</option><option>Browns</option><option>Reds</option>
+        <option value='Blues'>Waterliewaveminans</option>
+        <option value='Browns'>Fortress Rooted</option>
+        <option value='Reds'>Windyworrors</option>
         </select><br>
         Hoodie pattern: <input name='pattern' required><br>
         Rhinestone colors: <input name='stones' required><br>
@@ -2408,7 +2828,8 @@ class Handler(BaseHTTPRequestHandler):
         domain = {"Blues": "the sea", "Browns": "the woods",
                   "Reds": "the sky"}[tribe]
         add_notice(con, "New character %s (%s) is available — found in %s."
-                   % ((f.get("name") or "Custom")[:40], tribe, domain))
+                   % ((f.get("name") or "Custom")[:40],
+                      tribe_display(tribe), domain))
         con.execute("UPDATE users SET creator_slots_used="
                     "creator_slots_used+1 WHERE id=?", (user["id"],))
         con.commit()
@@ -2416,7 +2837,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- shop / PayPal purchases --
     def shop(self, con, user):
-        ensure_weekly_popup(con)
+        ensure_weekly_popups(con)
         items = con.execute(
             "SELECT * FROM shop_items WHERE sold=0 ORDER BY id").fetchall()
         body = ("<p>Individual characters are <b>$%s</b> each, paid "
@@ -2461,8 +2882,11 @@ class Handler(BaseHTTPRequestHandler):
                          "%s</div><b>%s</b> %s "
                          "<span class='tag'>%s</span> "
                          "<span class='tag'>%s</span><br>"
-                         "Hoodie: %s<br>Rhinestones: %s<br>Face: %s<br>"
-                         "Price: <s>$%s</s> <b>$%s</b> (%s)</div>" % (
+                         "Hoodie: %s<br>Rhinestones: %s<br>Stones: %d<br>"
+                         "Face: %s<br>"
+                         "Price: <s>$%s</s> <b>$%s</b> (%s)<br>"
+                         "<a href='/baby/%s'>View baby — zoom &amp; "
+                         "spin</a></div>" % (
                              baby_img_html(it),
                              esc(it["name"]),
                              gender_marker(baby_gender(it["tribe"],
@@ -2470,9 +2894,13 @@ class Handler(BaseHTTPRequestHandler):
                                                        it["stones"],
                                                        name=it["name"],
                                                        cert=it["cert"])),
-                             esc(it["cert"]), esc(it["tribe"]),
+                             esc(it["cert"]),
+                             esc(tribe_display(it["tribe"])),
                              esc(it["hoodie_pattern"]), esc(it["stones"]),
-                             esc(it["face"]), esc(it["price"]), sale, pct))
+                             stone_count(it["tribe"], it["cert"],
+                                         it["name"]),
+                             esc(it["face"]), esc(it["price"]), sale, pct,
+                             esc(it["cert"])))
                 if user:
                     body += ("<form method='post' action='/buy'>"
                              "<input type='hidden' name='shop_item_id' "
@@ -2487,42 +2915,19 @@ class Handler(BaseHTTPRequestHandler):
                              % (it["id"], sale, it["id"], sale))
                 else:
                     body += "<p><a href='/login'>Log in</a> to buy.</p>"
-        # This week's pop-up color: a new pattern + rhinestone combo on
-        # an existing tribe, for sale only this week.
-        popup = con.execute(
-            "SELECT * FROM popup_items WHERE cert=? AND sold=0",
-            (weekly_popup_cert(),)).fetchone()
-        if popup:
-            body += ("<h2>New color pop-up — this week only</h2>"
-                     "<div class='card'><div style='text-align:center'>"
-                     "%s</div><b>%s</b> %s "
-                     "<span class='tag'>%s</span> "
-                     "<span class='tag'>%s</span><br>"
-                     "Hoodie: %s<br>Rhinestones: %s<br>Face: %s<br>"
-                     "Price: $%s</div>" % (
-                         baby_img_html(popup),
-                         esc(popup["name"]),
-                         gender_marker(baby_gender(popup["tribe"],
-                                                   popup["hoodie_pattern"],
-                                                   popup["stones"],
-                                                   name=popup["name"],
-                                                   cert=popup["cert"])),
-                         esc(popup["cert"]), esc(popup["tribe"]),
-                         esc(popup["hoodie_pattern"]), esc(popup["stones"]),
-                         esc(popup["face"]), esc(popup["price"])))
-            if user:
-                body += ("<form method='post' action='/buy_popup'>"
-                         "<input type='hidden' name='popup_id' "
-                         "value='%d'><button>Buy for $%s with "
-                         "PayPal</button></form>"
-                         "<form method='post' action='/buy_popup_stripe'>"
-                         "<input type='hidden' name='popup_id' "
-                         "value='%d'><button>Buy for $%s with "
-                         "Cash App Pay</button></form>"
-                         % (popup["id"], popup["price"],
-                            popup["id"], popup["price"]))
-            else:
-                body += "<p><a href='/login'>Log in</a> to buy.</p>"
+        # This week's pop-ups: the drifter, the limited-edition
+        # special and rare, and the Shadow — each sold out listing
+        # simply disappears.
+        body += popup_shop_section(con, weekly_popup_cert(),
+                                   "Drifter pop-up — this week only",
+                                   user)
+        body += popup_shop_section(con, weekly_special_cert(),
+                                   "Special pop-up — limited edition",
+                                   user)
+        body += popup_shop_section(con, weekly_rare_cert(),
+                                   "Rare pop-up — limited edition", user)
+        body += popup_shop_section(con, weekly_shadow_cert(),
+                                   "Shadow pop-up — this week only", user)
         if not items:
             body += "<p>No individual characters are for sale right now.</p>"
         for it in items:
@@ -2532,8 +2937,10 @@ class Handler(BaseHTTPRequestHandler):
                      "%s</div><b>%s</b> %s "
                      "<span class='tag'>%s</span> "
                      "<span class='tag'>%s</span><br>"
-                     "Hoodie: %s<br>Rhinestones: %s<br>Face: %s<br>"
-                     "Price: $%s</div>" % (
+                     "Hoodie: %s<br>Rhinestones: %s<br>Stones: %d<br>"
+                     "Face: %s<br>"
+                     "Price: $%s<br><a href='/baby/%s'>View baby — "
+                     "zoom &amp; spin</a></div>" % (
                          baby_img_html(it),
                          esc(it["name"]),
                          gender_marker(baby_gender(it["tribe"],
@@ -2541,9 +2948,12 @@ class Handler(BaseHTTPRequestHandler):
                                                    it["stones"],
                                                    name=it["name"],
                                                    cert=it["cert"])),
-                         esc(it["cert"]), esc(it["tribe"]),
+                         esc(it["cert"]),
+                         esc(tribe_display(it["tribe"])),
                          esc(it["hoodie_pattern"]), esc(it["stones"]),
-                         esc(it["face"]), esc(it["price"])))
+                         stone_count(it["tribe"], it["cert"], it["name"]),
+                         esc(it["face"]), esc(it["price"]),
+                         esc(it["cert"])))
             if user:
                 body += ("<form method='post' action='/buy'>"
                          "<input type='hidden' name='shop_item_id' "
@@ -2570,8 +2980,10 @@ class Handler(BaseHTTPRequestHandler):
                      "%s</div><b>%s</b> %s "
                      "<span class='tag'>%s</span> "
                      "<span class='tag'>%s</span><br>"
-                     "Hoodie: %s<br>Rhinestones: %s<br>Face: %s<br>"
-                     "Price: $%s%s</div>" % (
+                     "Hoodie: %s<br>Rhinestones: %s<br>Stones: %d<br>"
+                     "Face: %s<br>"
+                     "Price: $%s%s<br><a href='/baby/%s'>View baby — "
+                     "zoom &amp; spin</a></div>" % (
                          baby_img_html(ld),
                          esc(ld["name"]),
                          gender_marker(baby_gender(ld["tribe"],
@@ -2580,10 +2992,14 @@ class Handler(BaseHTTPRequestHandler):
                                                    name=ld["name"],
                                                    cert=ld["cert"])),
                          esc(ld["cert"]),
-                         esc(ld["tribe"]), esc(ld["hoodie_pattern"]),
-                         esc(ld["stones"]), esc(ld["face"]),
+                         esc(tribe_display(ld["tribe"])),
+                         esc(ld["hoodie_pattern"]),
+                         esc(ld["stones"]),
+                         stone_count(ld["tribe"], ld["cert"], ld["name"]),
+                         esc(ld["face"]),
                          esc(ld["price"]),
-                         " — <b>SOLD</b>" if ld["sold"] else ""))
+                         " — <b>SOLD</b>" if ld["sold"] else "",
+                         esc(ld["cert"])))
             if user and not ld["sold"]:
                 body += ("<form method='post' action='/buy_leader'>"
                          "<input type='hidden' name='leader_id' "
@@ -2606,7 +3022,9 @@ class Handler(BaseHTTPRequestHandler):
             body += ("<div class='card'><div style='text-align:center'>"
                      "%s</div><b>%s</b> %s "
                      "<span class='tag'>%s</span><br>"
-                     "Price: $%s%s</div>" % (
+                     "Stones: 15<br>"
+                     "Price: $%s%s<br><a href='/baby/%s'>View baby — "
+                     "zoom &amp; spin</a></div>" % (
                          baby_img_html({"name": g["name"], "cert": g["cert"],
                                        "tribe": "Gods",
                                        "hoodie_pattern": "God Crown",
@@ -2617,7 +3035,8 @@ class Handler(BaseHTTPRequestHandler):
                              "Gods", "God Crown", "gold rhinestones")),
                          esc(g["cert"]),
                          esc(g["price"]),
-                         " — <b>SOLD</b>" if g["sold"] else ""))
+                         " — <b>SOLD</b>" if g["sold"] else "",
+                         esc(g["cert"])))
             if user and not g["sold"]:
                 body += ("<form method='post' action='/buy_god'>"
                          "<input type='hidden' name='god_id' "
@@ -2633,7 +3052,7 @@ class Handler(BaseHTTPRequestHandler):
                 body += "<p><a href='/login'>Log in</a> to buy.</p>"
         body += ("<h2>Points packs</h2>"
                  "<p>Buy points with real money (or earn them by "
-                 "trading). The 300 points at sign-up are free. Bought "
+                 "trading). The 600 points at sign-up are free. Bought "
                  "points add to your balance only — they do not count "
                  "toward the character-creator unlock, which stays "
                  "trade-earned only.</p>")
@@ -3017,7 +3436,8 @@ class Handler(BaseHTTPRequestHandler):
             self.redirect(url)
 
     def do_buy_popup(self, con, user):
-        """Start a pop-up color purchase via PayPal ($1.99)."""
+        """Start a pop-up purchase via PayPal (drifter, special, rare,
+        or Shadow, at the listing's own price)."""
         if self.need_login(user):
             return
         f = self.form()
@@ -3097,7 +3517,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             opts = ""
             for tribe in STARTERS:
-                opts += "<optgroup label='%s'>" % esc(tribe)
+                opts += "<optgroup label='%s'>" % esc(tribe_display(tribe))
                 for name in STARTERS[tribe]["names"]:
                     opts += "<option value='%s'>%s</option>" % (
                         esc(name), esc(name))
@@ -3106,9 +3526,9 @@ class Handler(BaseHTTPRequestHandler):
                     "(earned: %d, claimed: %d).</p>"
                     "<form method='post' action='/choice_baby'>"
                     "Tribe: <select name='tribe'>"
-                    "<option value='Blues'>Blues</option>"
-                    "<option value='Browns'>Browns</option>"
-                    "<option value='Reds'>Reds</option></select><br>"
+                    "<option value='Blues'>Waterliewaveminans</option>"
+                    "<option value='Browns'>Fortress Rooted</option>"
+                    "<option value='Reds'>Windyworrors</option></select><br>"
                     "Character: <select name='roster_name'>%s</select><br>"
                     "Name it (blank keeps the roster name): "
                     "<input name='baby_name' maxlength='40'><br>"
@@ -3153,15 +3573,18 @@ class Handler(BaseHTTPRequestHandler):
                     "balance." % extra)
         if kind == "leader":
             return ("Payment complete! Your new leader <b>%s</b> (%s) "
-                    "is in <a href='/me'>My Collection</a>."
-                    % (esc(name), esc(cert)))
+                    "is in <a href='/me'>My Collection</a>. "
+                    "<a href='/baby/%s'>View your baby</a>."
+                    % (esc(name), esc(cert), esc(cert)))
         if kind == "god":
             return ("Payment complete! Your new god <b>%s</b> (%s) is "
-                    "in <a href='/me'>My Collection</a>."
-                    % (esc(name), esc(cert)))
+                    "in <a href='/me'>My Collection</a>. "
+                    "<a href='/baby/%s'>View your baby</a>."
+                    % (esc(name), esc(cert), esc(cert)))
         return ("Payment complete! Your new hoodie baby <b>%s</b> (%s) "
-                "is in <a href='/me'>My Collection</a>."
-                % (esc(name), esc(cert)))
+                "is in <a href='/me'>My Collection</a>. "
+                "<a href='/baby/%s'>View your baby</a>."
+                % (esc(name), esc(cert), esc(cert)))
 
     def stripe_return(self, con, user, query):
         """Stripe sent the buyer back: verify the session server-side,
