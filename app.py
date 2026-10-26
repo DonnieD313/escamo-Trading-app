@@ -1219,25 +1219,31 @@ def page(title, body, user=None):
 # Share button script: phone share sheet when available, clipboard
 # fallback with an inline notice otherwise. Shares the CURRENT page
 # URL on purpose — Home shares the join link, a baby detail page
-# shares that baby. No new dependencies.
+# shares that baby. A failed or closed share sheet now falls back to
+# copying the link too, so a tap never silently does nothing.
+# No new dependencies.
 share_script = (
     "<script>function sharePage(){"
     "var n=document.getElementById('share-notice');"
     "function msg(t){n.textContent=t;}"
-    "var d={title:'Hoodie Babies Trade',"
-    "text:'Join Hoodie Babies Trade — pick your tribe, "
-    "get your starter baby and 600 points, and start trading!',"
-    "url:window.location.href};"
-    "if(navigator.share){navigator.share(d).catch(function(){});}"
-    "else if(navigator.clipboard&&navigator.clipboard.writeText){"
+    "function copyFallback(){"
+    "if(navigator.clipboard&&navigator.clipboard.writeText){"
     "navigator.clipboard.writeText(window.location.href).then("
-    "function(){msg('Link copied — paste it anywhere!');});}"
+    "function(){msg('Link copied — paste it anywhere!');},"
+    "function(){msg('Copy this link: '+window.location.href);});}"
     "else{var t=document.createElement('textarea');"
     "t.value=window.location.href;document.body.appendChild(t);"
     "t.select();try{document.execCommand('copy');"
     "msg('Link copied — paste it anywhere!');}"
     "catch(e){msg('Copy this link: '+window.location.href);}"
     "document.body.removeChild(t);}}"
+    "var d={title:'Hoodie Babies Trade',"
+    "text:'Join Hoodie Babies Trade — pick your tribe, "
+    "get your starter baby and 600 points, and start trading!',"
+    "url:window.location.href};"
+    "if(navigator.share){navigator.share(d).catch(function(){"
+    "copyFallback();});}"
+    "else{copyFallback();}}"
     "</script>")
 
 
