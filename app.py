@@ -16,6 +16,7 @@ Env:  PORT, HOST (default 127.0.0.1; set to 0.0.0.0 only behind a
 """
 import base64
 import datetime
+from decimal import Decimal, ROUND_HALF_UP
 import hashlib
 import html
 import json
@@ -35,6 +36,23 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 DB = os.environ.get("ESCAMO_DB", os.path.join(BASE, "app.db"))
 PORT = int(os.environ.get("PORT", "8090"))
 HOST = os.environ.get("HOST", "127.0.0.1")
+
+# Realistic character photos live in img/ next to app.py. They are
+# served at /img/<file>.jpg; the SVG portrait engine stays as the
+# fallback for every baby without a photo.
+IMG_DIR = os.path.join(BASE, "img")
+REALISTIC_IMAGES = {
+    "Harbor": "harbor.jpg", "Lagoon": "lagoon.jpg",
+    "Reef": "reef.jpg", "Drift": "drift.jpg",
+    "Birch": "birch.jpg", "Cedar": "cedar.jpg",
+    "Alder": "alder.jpg", "Aspen": "aspen.jpg",
+    "Sol": "sol.jpg", "Nova": "nova.jpg",
+    "Zephyr": "zephyr.jpg", "Flare": "flare.jpg",
+    "Damiana June": "damiana-june.jpg",
+    "Aaliyah Bee": "aaliyah-bee.jpg", "Jazmyn": "jazmyn.jpg",
+    "Muzle Back": "muzle-back.jpg", "Baraka": "baraka.jpg",
+    "Sirus V": "sirus-v.jpg",
+}
 # Set COOKIE_SECURE=1 when the app runs behind HTTPS so session and
 # CSRF cookies are only sent over secure connections. It stays off by
 # default so plain localhost testing keeps working.
@@ -389,6 +407,33 @@ def init_db():
         face TEXT NOT NULL,
         for_trade INTEGER NOT NULL DEFAULT 0,
         is_custom INTEGER NOT NULL DEFAULT 0,
+        gender TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS monthly_gifts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        month TEXT NOT NULL,
+        baby_cert TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, month)
+    );
+    CREATE TABLE IF NOT EXISTS choice_claims (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        baby_cert TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS popup_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cert TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        tribe TEXT NOT NULL,
+        hoodie_pattern TEXT NOT NULL,
+        stones TEXT NOT NULL,
+        face TEXT NOT NULL,
+        price TEXT NOT NULL DEFAULT '1.99',
+        sold INTEGER NOT NULL DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS offers (
@@ -472,6 +517,21 @@ def init_db():
     if "stripe_session_id" not in cols:
         con.execute("ALTER TABLE purchases ADD COLUMN stripe_session_id"
                     " TEXT")
+    # Migration for databases created before gender: babies gain a
+    # gender column. Every row is (re)computed under the current rule
+    # (leaders female, Blacks and gods male, others unmarked), so rows
+    # stored under the old dark/light color rule get corrected.
+    baby_cols = [r[1] for r in
+                 con.execute("PRAGMA table_info(babies)").fetchall()]
+    if "gender" not in baby_cols:
+        con.execute("ALTER TABLE babies ADD COLUMN gender TEXT")
+    for row in con.execute(
+            "SELECT id, cert, name, tribe, gender FROM babies").fetchall():
+        new_gender = baby_gender(row["tribe"], "", "",
+                                 name=row["name"], cert=row["cert"])
+        if row["gender"] != new_gender:
+            con.execute("UPDATE babies SET gender=? WHERE id=?",
+                        (new_gender, row["id"]))
     # Notices board: seeded once with the current characters and where
     # they were found; new additions append below.
     if con.execute("SELECT COUNT(*) FROM notices").fetchone()[0] == 0:
@@ -564,8 +624,9 @@ def mint_baby(con, owner_id, tribe=None, name=None, pattern=None,
         n += 1
     con.execute(
         "INSERT INTO babies (cert, owner_id, name, tribe, hoodie_pattern,"
-        " stones, face, is_custom) VALUES (?,?,?,?,?,?,?,?)",
-        (cert, owner_id, name, tribe, pattern, stones, face, is_custom))
+        " stones, face, is_custom, gender) VALUES (?,?,?,?,?,?,?,?,?)",
+        (cert, owner_id, name, tribe, pattern, stones, face, is_custom,
+         baby_gender(tribe, pattern, stones, name=name, cert=cert)))
     return cert
 
 
@@ -619,12 +680,34 @@ def grant_purchase(con, pur, user_id):
                     "granted.")
         con.execute(
             "INSERT INTO babies (cert, owner_id, name, tribe,"
-            " hoodie_pattern, stones, face) VALUES (?,?,?,?,?,?,?)",
+            " hoodie_pattern, stones, face, gender) VALUES (?,?,?,?,?,?,?,?)",
             (item["cert"], user_id, item["name"], item["tribe"],
-             item["hoodie_pattern"], item["stones"], item["face"]))
+             item["hoodie_pattern"], item["stones"], item["face"],
+             baby_gender(item["tribe"], item["hoodie_pattern"],
+                         item["stones"], name=item["name"],
+                         cert=item["cert"])))
         con.execute("UPDATE shop_items SET sold=1 WHERE id=?",
                     (item["id"],))
         return (True, "individual", item["name"], item["cert"], 0)
+    if item_type == "popup":
+        item = con.execute(
+            "SELECT * FROM popup_items WHERE cert=? AND sold=0",
+            (ref,)).fetchone()
+        if not item:
+            return (False, "popup", "", "",
+                    "That pop-up color was already sold — nothing was "
+                    "granted.")
+        con.execute(
+            "INSERT INTO babies (cert, owner_id, name, tribe,"
+            " hoodie_pattern, stones, face, gender) VALUES (?,?,?,?,?,?,?,?)",
+            (item["cert"], user_id, item["name"], item["tribe"],
+             item["hoodie_pattern"], item["stones"], item["face"],
+             baby_gender(item["tribe"], item["hoodie_pattern"],
+                         item["stones"], name=item["name"],
+                         cert=item["cert"])))
+        con.execute("UPDATE popup_items SET sold=1 WHERE id=?",
+                    (item["id"],))
+        return (True, "popup", item["name"], item["cert"], 0)
     if item_type == "leader":
         ld = con.execute(
             "SELECT * FROM leaders WHERE cert=? AND sold=0",
@@ -634,9 +717,12 @@ def grant_purchase(con, pur, user_id):
                     "That leader was already sold — nothing was granted.")
         con.execute(
             "INSERT INTO babies (cert, owner_id, name, tribe,"
-            " hoodie_pattern, stones, face) VALUES (?,?,?,?,?,?,?)",
+            " hoodie_pattern, stones, face, gender) VALUES (?,?,?,?,?,?,?,?)",
             (ld["cert"], user_id, ld["name"], ld["tribe"],
-             ld["hoodie_pattern"], ld["stones"], ld["face"]))
+             ld["hoodie_pattern"], ld["stones"], ld["face"],
+             baby_gender(ld["tribe"], ld["hoodie_pattern"],
+                         ld["stones"], name=ld["name"],
+                         cert=ld["cert"])))
         con.execute("UPDATE leaders SET sold=1 WHERE id=?", (ld["id"],))
         add_notice(con, "Leader %s was purchased — now in a new "
                    "collection." % ld["name"])
@@ -650,9 +736,10 @@ def grant_purchase(con, pur, user_id):
                     "That god was already taken — nothing was granted.")
         con.execute(
             "INSERT INTO babies (cert, owner_id, name, tribe,"
-            " hoodie_pattern, stones, face) VALUES (?,?,?,?,?,?,?)",
+            " hoodie_pattern, stones, face, gender) VALUES (?,?,?,?,?,?,?,?)",
             (g["cert"], user_id, g["name"], "Gods", "God hoodie",
-             "god rhinestones", "god-like"))
+             "god rhinestones", "god-like",
+             baby_gender("Gods", "God hoodie", "god rhinestones")))
         con.execute("UPDATE gods SET sold=1 WHERE id=?", (g["id"],))
         add_notice(con, "A god was purchased — one of only 3 gods, now "
                    "in a new collection.")
@@ -705,9 +792,9 @@ def ensure_weekly_black(con):
         pick = BLACKS_ROSTER[week % len(BLACKS_ROSTER)]
         con.execute(
             "INSERT INTO babies (cert, owner_id, name, tribe, hoodie_pattern,"
-            " stones, face, for_trade) VALUES (?,?,?,?,?,?,?,1)",
+            " stones, face, for_trade, gender) VALUES (?,?,?,?,?,?,?,?,?)",
             (cert, shop_id, pick["name"], "Blacks", pick["pattern"],
-             BLACK_STONES, BLACK_FACE))
+             BLACK_STONES, BLACK_FACE, 1, "male"))
         add_notice(con, "A Black has popped up for sale — found underground.")
     else:
         # Only re-list while the Underground still owns it: once a Black
@@ -715,6 +802,207 @@ def ensure_weekly_black(con):
         con.execute("UPDATE babies SET for_trade=1 WHERE cert=? "
                     "AND owner_id=?", (cert, shop_id))
     con.commit()
+
+# ---------------------------------------------------------------- deals, gifts, pop-ups, ownership, gender
+# Defaults in this section are Doneil's to correct (see README):
+# deals pick 4 individual characters per ISO week (2 at 25% off, 2 at
+# half off); the monthly gift needs 1 completed purchase in the month;
+# a choice baby is earned every 5 completed shop purchases; pop-ups
+# are $1.99 like other individuals; gender is leaders female, Blacks
+# and gods male, every other baby unmarked (no color inference).
+
+# Pop-up color variants: NEW pattern + rhinestone combinations on the
+# existing tribes only. No new tribe names are invented here — a new
+# tribe joins the pop-up rotation automatically once it is added to
+# STARTERS as data (see ensure_weekly_popup).
+POPUP_VARIANTS = {
+    "Blues": [("Aurora Tide", "teal + silver rhinestones"),
+              ("Coral Glow", "pink + gold rhinestones"),
+              ("Seafoam Dream", "teal + white rhinestones")],
+    "Browns": [("Amber Dusk", "copper + amber rhinestones"),
+               ("Moss Glow", "green + gold rhinestones"),
+               ("Timber Night", "brown + black rhinestones")],
+    "Reds": [("Crimson Veil", "crimson + gold rhinestones"),
+             ("Sky Blush", "pink + silver rhinestones"),
+             ("Ember Dusk", "orange + red rhinestones")],
+}
+POPUP_FOUND = {"Blues": "by the sea", "Browns": "in the woods",
+               "Reds": "in the sky"}
+
+# Gender rule (Doneil's correction): the three leaders are female,
+# Blacks and gods are male, every other baby has no gender marker.
+# No inference from hoodie colors. Leaders are matched by certificate
+# or name, the same way portraits and ownership already match them.
+_LEADER_CERT_SET = {ld["cert"] for ld in LEADERS}
+_LEADER_NAME_SET = {ld["name"] for ld in LEADERS}
+
+
+def baby_gender(tribe, pattern, stones, name=None, cert=None):
+    """Gender for a baby: leaders female, Blacks and gods male, all
+    other babies unmarked (None). Pattern/stones are accepted for
+    call-site compatibility and ignored."""
+    if tribe in ("Blacks", "Gods"):
+        return "male"
+    if cert in _LEADER_CERT_SET or name in _LEADER_NAME_SET:
+        return "female"
+    return None
+
+
+def gender_marker(gender):
+    if gender == "male":
+        return "♂"
+    if gender == "female":
+        return "♀"
+    return ""
+
+
+def current_iso_week():
+    today = datetime.date.today()
+    iso_year, iso_week, _ = today.isocalendar()
+    return iso_year, iso_week
+
+
+def deal_price(price_str, fraction_off):
+    """Sale price for a discount fraction, rounded half-up to cents:
+    $1.99 at 25% off is $1.49, at half off is $1.00."""
+    price = Decimal(price_str) * (Decimal(1) - Decimal(str(fraction_off)))
+    return format(price.quantize(Decimal("0.01"),
+                                 rounding=ROUND_HALF_UP), "f")
+
+
+def weekly_deal_picks(con):
+    """This week's Deals shelf: a deterministic rotating set of
+    individual shop characters — up to 4, alternating 25% off and half
+    off. The pick is seeded by the ISO week, so it is stable all week
+    and changes next week; sold items simply drop off the shelf."""
+    certs = [r["cert"] for r in con.execute(
+        "SELECT cert FROM shop_items ORDER BY id").fetchall()]
+    if not certs:
+        return {}
+    iso_year, iso_week = current_iso_week()
+    rng = random.Random("deals-%d-W%02d" % (iso_year, iso_week))
+    order = certs[:]
+    rng.shuffle(order)
+    picks = {}
+    for i, cert in enumerate(order[:4]):
+        picks[cert] = 0.25 if i % 2 == 0 else 0.50
+    return picks
+
+
+def weekly_popup_cert():
+    iso_year, iso_week = current_iso_week()
+    return "EHB-P-%d-W%02d" % (iso_year, iso_week)
+
+
+def ensure_weekly_popup(con):
+    """One new color variant pops up in the Shop each week, plus a
+    notice saying what popped up and where it was found. Only the
+    current week's pop-up is listed for sale. The tribe rotation reads
+    STARTERS, so a tribe added there later joins automatically."""
+    cert = weekly_popup_cert()
+    if con.execute("SELECT 1 FROM popup_items WHERE cert=?",
+                   (cert,)).fetchone():
+        return
+    tribes = list(STARTERS)
+    _, iso_week = current_iso_week()
+    tribe = tribes[iso_week % len(tribes)]
+    variants = POPUP_VARIANTS.get(tribe, [])
+    if variants:
+        pattern, stones = variants[iso_week % len(variants)]
+    else:
+        pattern = STARTERS[tribe]["patterns"][0]
+        stones = STARTERS[tribe]["stones"]
+    name = STARTERS[tribe]["names"][iso_week % len(STARTERS[tribe]["names"])]
+    con.execute(
+        "INSERT INTO popup_items (cert, name, tribe, hoodie_pattern,"
+        " stones, face, price) VALUES (?,?,?,?,?,?,?)",
+        (cert, name, tribe, pattern, stones, STARTERS[tribe]["face"],
+         PRICE_INDIVIDUAL))
+    add_notice(con, "A new %s color popped up in the Shop — %s with %s, "
+               "found %s." % (tribe, pattern, stones,
+                              POPUP_FOUND.get(tribe, "somewhere new")))
+    con.commit()
+
+
+def tribe_leader_cert(con, tribe):
+    row = con.execute("SELECT cert FROM leaders WHERE tribe=?",
+                      (tribe,)).fetchone()
+    return row["cert"] if row else None
+
+
+def tribe_owner(con, tribe):
+    """Owner of a tribe: whoever currently holds that tribe's leader
+    baby. Ownership passes automatically when the leader is traded,
+    because it follows the baby, not the buyer."""
+    cert = tribe_leader_cert(con, tribe)
+    if not cert:
+        return None
+    row = con.execute(
+        "SELECT users.username FROM babies JOIN users "
+        "ON users.id = babies.owner_id WHERE babies.cert=?",
+        (cert,)).fetchone()
+    return row["username"] if row else None
+
+
+def tribe_standings(con, tribe):
+    """(owner, second, third) for a tribe. Second and Third are the two
+    users other than the owner holding the most babies of that tribe
+    (ties broken by username, so the ranking is deterministic). Titles
+    only — no perks for 2nd/3rd."""
+    owner = tribe_owner(con, tribe)
+    rows = con.execute(
+        "SELECT users.username, COUNT(*) AS c FROM babies JOIN users "
+        "ON users.id = babies.owner_id WHERE babies.tribe=? "
+        "GROUP BY users.id ORDER BY c DESC, users.username ASC",
+        (tribe,)).fetchall()
+    others = [r["username"] for r in rows if r["username"] != owner]
+    second = others[0] if len(others) > 0 else None
+    third = others[1] if len(others) > 1 else None
+    return owner, second, third
+
+
+def user_owned_tribes(con, user_id):
+    """Tribes whose leader baby this user currently holds."""
+    owned = []
+    for tribe in ("Blues", "Browns", "Reds"):
+        cert = tribe_leader_cert(con, tribe)
+        if not cert:
+            continue
+        row = con.execute(
+            "SELECT 1 FROM babies WHERE cert=? AND owner_id=?",
+            (cert, user_id)).fetchone()
+        if row:
+            owned.append(tribe)
+    return owned
+
+
+def monthly_gift_state(con, user_id):
+    """(month, bought_this_month, already_claimed) for the monthly
+    gift: one free baby per user per calendar month, only if the user
+    made at least one completed purchase that month."""
+    month = datetime.date.today().strftime("%Y-%m")
+    bought = con.execute(
+        "SELECT COUNT(*) FROM purchases WHERE user_id=? AND status="
+        "'completed' AND strftime('%Y-%m', created_at)=?",
+        (user_id, month)).fetchone()[0]
+    claimed = con.execute(
+        "SELECT 1 FROM monthly_gifts WHERE user_id=? AND month=?",
+        (user_id, month)).fetchone()
+    return month, bought > 0, claimed is not None
+
+
+def choice_progress(con, user_id):
+    """(available, completed, earned, claimed) for choice babies: one
+    choice baby per 5 cumulative completed shop purchases, at 5, 10,
+    15, ... Unclaimed milestones stay available until claimed."""
+    done = con.execute(
+        "SELECT COUNT(*) FROM purchases WHERE user_id=? AND status="
+        "'completed'", (user_id,)).fetchone()[0]
+    earned = done // 5
+    claimed = con.execute(
+        "SELECT COUNT(*) FROM choice_claims WHERE user_id=?",
+        (user_id,)).fetchone()[0]
+    return max(0, earned - claimed), done, earned, claimed
 
 # ---------------------------------------------------------------- html helpers
 def esc(s):
@@ -1033,12 +1321,41 @@ def portrait_svg(b, size=120):
     return "".join(parts)
 
 
+def realistic_img_file(b):
+    """Realistic photo filename for this baby, or None.
+
+    The 19 photographed characters match by name; every Black baby
+    (any name) uses the Black Miner photo. Anything else returns
+    None and keeps its SVG portrait.
+    """
+    if _bget(b, "tribe") == "Blacks":
+        return "black-miner.jpg"
+    return REALISTIC_IMAGES.get(_bget(b, "name"))
+
+
+def baby_img_html(b, size=120):
+    """Photo <img> when a realistic photo exists, else SVG portrait.
+
+    The file must actually be on disk; a missing file falls back to
+    the SVG portrait so a card never renders broken.
+    """
+    fname = realistic_img_file(b)
+    if fname:
+        full = os.path.join(IMG_DIR, fname)
+        if os.path.isfile(full):
+            return ("<img src='/img/%s' alt='%s' width='%d' "
+                    "style='max-width:100%%;border-radius:12px'>"
+                    % (fname, esc(_bget(b, "name")), size))
+    return portrait_svg(b, size)
+
+
 def baby_card(b, owner_name=None, show_owner=False):
     out = ("<div class='card'><div style='text-align:center'>%s</div>"
-           "<b>%s</b> <span class='tag'>%s</span> " \
+           "<b>%s</b> %s <span class='tag'>%s</span> " \
            "<span class='tag'>%s</span><br>" % (
-               portrait_svg(b), esc(b["name"]), esc(b["cert"]),
-               esc(b["tribe"])))
+               baby_img_html(b), esc(b["name"]),
+               gender_marker(_bget(b, "gender", "")),
+               esc(b["cert"]), esc(b["tribe"])))
     out += "Hoodie: %s<br>Rhinestones: %s<br>Face: %s<br>" % (
         esc(b["hoodie_pattern"]), esc(b["stones"]), esc(b["face"]))
     if b["tribe"] == "Blacks":
@@ -1110,6 +1427,27 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def serve_img(self, name):
+        # Realistic character photos live in img/ next to app.py.
+        # Only plain lowercase filenames are served: no slashes, no
+        # dot segments, so no path can escape the folder.
+        if not re.fullmatch(r"[a-z0-9-]+\.jpg", name or ""):
+            self.send_html(page("Not found", "<p>Unknown image.</p>",
+                                None), 404)
+            return
+        full = os.path.join(IMG_DIR, name)
+        if not os.path.isfile(full):
+            self.send_html(page("Not found", "<p>Unknown image.</p>",
+                                None), 404)
+            return
+        with open(full, "rb") as f:
+            data = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def redirect(self, path):
         self.send_response(302)
         self.send_header("Location", path)
@@ -1171,7 +1509,7 @@ class Handler(BaseHTTPRequestHandler):
             self._ensure_csrf()
             user = self.current_user(con)
             if path == "/":
-                self.home(user)
+                self.home(con, user)
             elif path == "/signup":
                 self.signup_form(query)
             elif path == "/login":
@@ -1202,6 +1540,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.stripe_cancel(con, user, query)
             elif path == "/create":
                 self.create_form(con, user)
+            elif path == "/choice_baby":
+                self.choice_baby_form(con, user)
+            elif path.startswith("/img/"):
+                self.serve_img(path[5:])
             else:
                 self.send_html(page("Not found", "<p>Unknown page.</p>",
                                     user), 404)
@@ -1251,6 +1593,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.do_buy_points(con, user)
             elif path == "/buy_points_stripe":
                 self.do_buy_points_stripe(con, user)
+            elif path == "/buy_popup":
+                self.do_buy_popup(con, user)
+            elif path == "/buy_popup_stripe":
+                self.do_buy_popup_stripe(con, user)
+            elif path == "/claim_gift":
+                self.do_claim_gift(con, user)
+            elif path == "/choice_baby":
+                self.do_choice_baby(con, user)
             elif path == "/offer":
                 self.do_offer(con, user)
             elif path == "/offer_action":
@@ -1270,7 +1620,7 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     # -- pages --
-    def home(self, user):
+    def home(self, con, user):
         body = """<p>Welcome to <b>Escamo Hoodie Babies Trade</b> — a trading
         platform for small 3-inch hoodie babies. Every hoodie is 1-of-1:
         no two are the same, and that's what makes the trade better.</p>
@@ -1281,6 +1631,35 @@ class Handler(BaseHTTPRequestHandler):
         every 300 points earned unlocks adding your own character.</p>"""
         if user:
             body += "<p><a href='/me'>Go to my collection</a></p>"
+            month, bought, claimed = monthly_gift_state(con, user["id"])
+            if not claimed and bought:
+                body += ("<div class='card'><b>Monthly gift — "
+                         "available!</b> You bought something this month, "
+                         "so you can claim one free hoodie baby."
+                         "<form method='post' action='/claim_gift'>"
+                         "<button>Claim my monthly gift</button></form>"
+                         "</div>")
+            elif not claimed:
+                body += ("<div class='card'>Monthly gift: buy something "
+                         "in the <a href='/shop'>Shop</a> this month and "
+                         "you can claim one free hoodie baby.</div>")
+            else:
+                body += ("<div class='card'>Monthly gift claimed for "
+                         "%s — your next one comes next month.</div>"
+                         % esc(month))
+            avail, done, earned, nclaimed = choice_progress(con,
+                                                            user["id"])
+            if avail > 0:
+                body += ("<div class='card'><b>You have %d choice "
+                         "hoodie %s to claim!</b> Every 5 shop purchases "
+                         "earns one — pick yours "
+                         "<a href='/choice_baby'>here</a>.</div>"
+                         % (avail, "baby" if avail == 1 else "babies"))
+            else:
+                body += ("<div class='card'>Choice babies: %d shop "
+                         "purchases so far — %d more until your next "
+                         "choice baby.</div>"
+                         % (done, 5 - (done % 5)))
         else:
             body += ("<p><a href='/signup'>Sign up</a> or "
                      "<a href='/login'>log in</a> to start trading.</p>")
@@ -1304,6 +1683,26 @@ class Handler(BaseHTTPRequestHandler):
 
     def world(self, con, user):
         ensure_weekly_black(con)
+        ensure_weekly_popup(con)
+        standings = ""
+        for tribe, leader in (("Blues", "Damiana June"),
+                              ("Browns", "Aaliyah Bee"),
+                              ("Reds", "Jazmyn")):
+            owner, second, third = tribe_standings(con, tribe)
+            standings += ("<div class='card'><b>%s tribe standings</b>"
+                          "<br>Owner: %s<br>Second: %s<br>Third: %s</div>"
+                          % (esc(tribe),
+                             esc(owner) if owner else
+                             "none yet — buy %s in the Shop" % leader,
+                             esc(second) if second else "—",
+                             esc(third) if third else "—"))
+        standings += ("<div class='card'>Whoever buys a tribe's leader "
+                      "owns that tribe — Damiana June owns the Blues, "
+                      "Aaliyah Bee owns the Browns, Jazmyn owns the "
+                      "Reds. Trade the leader away and ownership passes "
+                      "to the new holder. Second and Third are the two "
+                      "other holders with the most babies of that tribe "
+                      "— titles only, no extra perks.</div>")
         body = """
         <div class='card'><b>Blues — rulers over water</b><br>
         Led by <b>Damiana June</b>, Controller of Water. Blue slanted eyes,
@@ -1361,7 +1760,7 @@ class Handler(BaseHTTPRequestHandler):
         Winter collections are coming. As characters are added, everyone
         gets a notice that they are available and where they were found —
         see the <a href='/notices'>Notices</a> board.</div>
-        <p>These leaders are the founders of a new world.</p>"""
+        <p>These leaders are the founders of a new world.</p>""" + standings
         self.send_html(page("The World of Escamo", body, user))
 
     def notices(self, con, user):
@@ -1615,6 +2014,12 @@ class Handler(BaseHTTPRequestHandler):
                      esc(user["invite_code"]), esc(user["invite_code"])))
         if query.get("msg"):
             body += "<p class='ok'>%s</p>" % esc(query["msg"][0])
+        owned = user_owned_tribes(con, user["id"])
+        for tribe in owned:
+            body += ("<p><b>You are the Owner of the %s tribe!</b> "
+                     "Buying that tribe's leader made you its owner — "
+                     "if you trade the leader away, ownership passes "
+                     "to the new holder.</p>" % esc(tribe))
         body += "<h2>My hoodie babies (%d)</h2>" % len(babies)
         for b in babies:
             body += baby_card(b)
@@ -1777,18 +2182,22 @@ class Handler(BaseHTTPRequestHandler):
                 portraits = ("<div style='text-align:center'>%s"
                              "<span style='font-size:20px'> &#8594; </span>"
                              "%s</div>" % (
-                                 portrait_svg(ob, 72) if ob else "",
-                                 portrait_svg(wb, 72) if wb else ""))
+                                 baby_img_html(ob, 72) if ob else "",
+                                 baby_img_html(wb, 72) if wb else ""))
             text = ("<div class='card'>%sFrom <b>%s</b> to <b>%s</b> — "
                     "offers %s + %d points for %s "
                     "(status: %s)</div>" % (
                         portraits,
                         esc(users.get(o["from_user"], "?")),
                         esc(users.get(o["to_user"], "?")),
-                        ("%s (%s)" % (esc(ob["name"]), esc(ob["cert"])))
+                        ("%s %s (%s)" % (esc(ob["name"]),
+                                          gender_marker(_bget(ob, "gender", "")),
+                                          esc(ob["cert"])))
                         if ob else "no baby",
                         o["offered_points"],
-                        ("%s (%s)" % (esc(wb["name"]), esc(wb["cert"])))
+                        ("%s %s (%s)" % (esc(wb["name"]),
+                                          gender_marker(_bget(wb, "gender", "")),
+                                          esc(wb["cert"])))
                         if wb else "?",
                         esc(o["status"])))
             if o["status"] == "pending" and incoming:
@@ -1994,6 +2403,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- shop / PayPal purchases --
     def shop(self, con, user):
+        ensure_weekly_popup(con)
         items = con.execute(
             "SELECT * FROM shop_items WHERE sold=0 ORDER BY id").fetchall()
         body = ("<p>Individual characters are <b>$%s</b> each, paid "
@@ -2003,17 +2413,122 @@ class Handler(BaseHTTPRequestHandler):
             body += (" Checkout runs in <b>test mode</b>"
                      " — no real money moves.")
         body += "</p>"
-        if not items:
-            body += "<p>No individual characters are for sale right now.</p>"
-        for it in items:
-            body += ("<div class='card'><div style='text-align:center'>"
-                     "%s</div><b>%s</b> "
+        # Monthly gift + choice-baby banners for logged-in shoppers.
+        if user:
+            month, bought, claimed = monthly_gift_state(con, user["id"])
+            if not claimed and bought:
+                body += ("<div class='card'><b>Monthly gift — "
+                         "available!</b> You bought something this month, "
+                         "so you can claim one free hoodie baby."
+                         "<form method='post' action='/claim_gift'>"
+                         "<button>Claim my monthly gift</button></form>"
+                         "</div>")
+            avail, done, earned, nclaimed = choice_progress(con,
+                                                            user["id"])
+            if avail > 0:
+                body += ("<div class='card'><b>You have %d choice "
+                         "hoodie %s to claim!</b> Every 5 shop purchases "
+                         "earns one — pick yours "
+                         "<a href='/choice_baby'>here</a>.</div>"
+                         % (avail, "baby" if avail == 1 else "babies"))
+        # Deals of the week: a rotating set of individual characters at
+        # 25% off or half off. Deal items are sold only from this shelf
+        # (at the sale price); the regular list below skips them.
+        picks = weekly_deal_picks(con)
+        deal_items = [it for it in items if it["cert"] in picks]
+        if deal_items:
+            body += ("<h2>Deals of the week</h2><p>These individual "
+                     "characters are on sale this week only — some at "
+                     "25% off, some at half off.</p>")
+            for it in deal_items:
+                frac = picks[it["cert"]]
+                sale = deal_price(it["price"], frac)
+                pct = "25% off" if frac == 0.25 else "half off"
+                body += ("<div class='card'><div style='text-align:center'>"
+                         "%s</div><b>%s</b> %s "
+                         "<span class='tag'>%s</span> "
+                         "<span class='tag'>%s</span><br>"
+                         "Hoodie: %s<br>Rhinestones: %s<br>Face: %s<br>"
+                         "Price: <s>$%s</s> <b>$%s</b> (%s)</div>" % (
+                             baby_img_html(it),
+                             esc(it["name"]),
+                             gender_marker(baby_gender(it["tribe"],
+                                                       it["hoodie_pattern"],
+                                                       it["stones"],
+                                                       name=it["name"],
+                                                       cert=it["cert"])),
+                             esc(it["cert"]), esc(it["tribe"]),
+                             esc(it["hoodie_pattern"]), esc(it["stones"]),
+                             esc(it["face"]), esc(it["price"]), sale, pct))
+                if user:
+                    body += ("<form method='post' action='/buy'>"
+                             "<input type='hidden' name='shop_item_id' "
+                             "value='%d'><input type='hidden' name='deal' "
+                             "value='1'><button>Buy for $%s with "
+                             "PayPal</button></form>"
+                             "<form method='post' action='/buy_stripe'>"
+                             "<input type='hidden' name='shop_item_id' "
+                             "value='%d'><input type='hidden' name='deal' "
+                             "value='1'><button>Buy for $%s with "
+                             "Cash App Pay</button></form>"
+                             % (it["id"], sale, it["id"], sale))
+                else:
+                    body += "<p><a href='/login'>Log in</a> to buy.</p>"
+        # This week's pop-up color: a new pattern + rhinestone combo on
+        # an existing tribe, for sale only this week.
+        popup = con.execute(
+            "SELECT * FROM popup_items WHERE cert=? AND sold=0",
+            (weekly_popup_cert(),)).fetchone()
+        if popup:
+            body += ("<h2>New color pop-up — this week only</h2>"
+                     "<div class='card'><div style='text-align:center'>"
+                     "%s</div><b>%s</b> %s "
                      "<span class='tag'>%s</span> "
                      "<span class='tag'>%s</span><br>"
                      "Hoodie: %s<br>Rhinestones: %s<br>Face: %s<br>"
                      "Price: $%s</div>" % (
-                         portrait_svg(it),
-                         esc(it["name"]), esc(it["cert"]), esc(it["tribe"]),
+                         portrait_svg(popup),
+                         esc(popup["name"]),
+                         gender_marker(baby_gender(popup["tribe"],
+                                                   popup["hoodie_pattern"],
+                                                   popup["stones"],
+                                                   name=popup["name"],
+                                                   cert=popup["cert"])),
+                         esc(popup["cert"]), esc(popup["tribe"]),
+                         esc(popup["hoodie_pattern"]), esc(popup["stones"]),
+                         esc(popup["face"]), esc(popup["price"])))
+            if user:
+                body += ("<form method='post' action='/buy_popup'>"
+                         "<input type='hidden' name='popup_id' "
+                         "value='%d'><button>Buy for $%s with "
+                         "PayPal</button></form>"
+                         "<form method='post' action='/buy_popup_stripe'>"
+                         "<input type='hidden' name='popup_id' "
+                         "value='%d'><button>Buy for $%s with "
+                         "Cash App Pay</button></form>"
+                         % (popup["id"], popup["price"],
+                            popup["id"], popup["price"]))
+            else:
+                body += "<p><a href='/login'>Log in</a> to buy.</p>"
+        if not items:
+            body += "<p>No individual characters are for sale right now.</p>"
+        for it in items:
+            if it["cert"] in picks:
+                continue
+            body += ("<div class='card'><div style='text-align:center'>"
+                     "%s</div><b>%s</b> %s "
+                     "<span class='tag'>%s</span> "
+                     "<span class='tag'>%s</span><br>"
+                     "Hoodie: %s<br>Rhinestones: %s<br>Face: %s<br>"
+                     "Price: $%s</div>" % (
+                         baby_img_html(it),
+                         esc(it["name"]),
+                         gender_marker(baby_gender(it["tribe"],
+                                                   it["hoodie_pattern"],
+                                                   it["stones"],
+                                                   name=it["name"],
+                                                   cert=it["cert"])),
+                         esc(it["cert"]), esc(it["tribe"]),
                          esc(it["hoodie_pattern"]), esc(it["stones"]),
                          esc(it["face"]), esc(it["price"])))
             if user:
@@ -2039,13 +2554,19 @@ class Handler(BaseHTTPRequestHandler):
             "SELECT * FROM leaders ORDER BY id").fetchall()
         for ld in leaders:
             body += ("<div class='card'><div style='text-align:center'>"
-                     "%s</div><b>%s</b> "
+                     "%s</div><b>%s</b> %s "
                      "<span class='tag'>%s</span> "
                      "<span class='tag'>%s</span><br>"
                      "Hoodie: %s<br>Rhinestones: %s<br>Face: %s<br>"
                      "Price: $%s%s</div>" % (
-                         portrait_svg(ld),
-                         esc(ld["name"]), esc(ld["cert"]),
+                         baby_img_html(ld),
+                         esc(ld["name"]),
+                         gender_marker(baby_gender(ld["tribe"],
+                                                   ld["hoodie_pattern"],
+                                                   ld["stones"],
+                                                   name=ld["name"],
+                                                   cert=ld["cert"])),
+                         esc(ld["cert"]),
                          esc(ld["tribe"]), esc(ld["hoodie_pattern"]),
                          esc(ld["stones"]), esc(ld["face"]),
                          esc(ld["price"]),
@@ -2070,15 +2591,18 @@ class Handler(BaseHTTPRequestHandler):
         gods = con.execute("SELECT * FROM gods ORDER BY id").fetchall()
         for g in gods:
             body += ("<div class='card'><div style='text-align:center'>"
-                     "%s</div><b>%s</b> "
+                     "%s</div><b>%s</b> %s "
                      "<span class='tag'>%s</span><br>"
                      "Price: $%s%s</div>" % (
-                         portrait_svg({"name": g["name"], "cert": g["cert"],
+                         baby_img_html({"name": g["name"], "cert": g["cert"],
                                        "tribe": "Gods",
                                        "hoodie_pattern": "God Crown",
                                        "stones": "gold rhinestones",
                                        "face": "grand"}),
-                         esc(g["name"]), esc(g["cert"]),
+                         esc(g["name"]),
+                         gender_marker(baby_gender(
+                             "Gods", "God Crown", "gold rhinestones")),
+                         esc(g["cert"]),
                          esc(g["price"]),
                          " — <b>SOLD</b>" if g["sold"] else ""))
             if user and not g["sold"]:
@@ -2135,8 +2659,19 @@ class Handler(BaseHTTPRequestHandler):
                                   esc(p["status"])))
         self.send_html(page("My Purchases", body, user))
 
+    def deal_amount(self, con, f, item):
+        """Price for an individual buy: the Deals-shelf sale price when
+        the request came from the shelf (deal=1) and the item is one of
+        this week's deal picks, otherwise the regular price."""
+        if f.get("deal") == "1":
+            frac = weekly_deal_picks(con).get(item["cert"])
+            if frac is not None:
+                return deal_price(item["price"], frac)
+        return item["price"]
+
     def do_buy(self, con, user):
-        """Start a $1.99 individual-character purchase via PayPal."""
+        """Start an individual-character purchase via PayPal (sale
+        price when bought from the Deals shelf)."""
         if self.need_login(user):
             return
         f = self.form()
@@ -2148,6 +2683,7 @@ class Handler(BaseHTTPRequestHandler):
                                  "<p class='err'>That character is no "
                                  "longer for sale.</p>", user))
             return
+        amount = self.deal_amount(con, f, item)
         if not paypal_configured():
             self.send_html(page(
                 "Shop",
@@ -2156,7 +2692,7 @@ class Handler(BaseHTTPRequestHandler):
                 "README for setup steps).</p>", user))
             return
         try:
-            order_id, approve_url = paypal_create_order(PRICE_INDIVIDUAL)
+            order_id, approve_url = paypal_create_order(amount)
         except PayPalError as e:
             self.send_html(page("Shop",
                                  "<p class='err'>Could not start PayPal "
@@ -2165,7 +2701,7 @@ class Handler(BaseHTTPRequestHandler):
         con.execute(
             "INSERT INTO purchases (user_id, item_type, item_ref, amount,"
             " paypal_order_id, status) VALUES (?,?,?,?,?,'pending')",
-            (user["id"], "individual", item["cert"], PRICE_INDIVIDUAL,
+            (user["id"], "individual", item["cert"], amount,
              order_id))
         con.commit()
         self.redirect(approve_url)
@@ -2260,8 +2796,9 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- shop / Stripe (Cash App Pay) purchases --
     def do_buy_stripe(self, con, user):
-        """Start a $1.99 individual-character purchase via Stripe
-        Checkout with Cash App Pay."""
+        """Start an individual-character purchase via Stripe Checkout
+        with Cash App Pay (sale price when bought from the Deals
+        shelf)."""
         if self.need_login(user):
             return
         f = self.form()
@@ -2273,6 +2810,7 @@ class Handler(BaseHTTPRequestHandler):
                                  "<p class='err'>That character is no "
                                  "longer for sale.</p>", user))
             return
+        amount = self.deal_amount(con, f, item)
         if not stripe_configured():
             self.send_html(page(
                 "Shop",
@@ -2282,7 +2820,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             session_id, checkout_url = stripe_create_session(
-                199, "%s (%s)" % (item["name"], item["cert"]))
+                int(round(float(amount) * 100)),
+                "%s (%s)" % (item["name"], item["cert"]))
         except StripeError as e:
             self.send_html(page("Shop",
                                  "<p class='err'>Could not start Cash App "
@@ -2291,7 +2830,7 @@ class Handler(BaseHTTPRequestHandler):
         con.execute(
             "INSERT INTO purchases (user_id, item_type, item_ref, amount,"
             " stripe_session_id, status) VALUES (?,?,?,?,?,'pending')",
-            (user["id"], "individual", item["cert"], PRICE_INDIVIDUAL,
+            (user["id"], "individual", item["cert"], amount,
              session_id))
         con.commit()
         self.redirect(checkout_url)
@@ -2463,6 +3002,136 @@ class Handler(BaseHTTPRequestHandler):
             POINTS_PACK_PRICES[n], "%d points pack" % n)
         if url:
             self.redirect(url)
+
+    def do_buy_popup(self, con, user):
+        """Start a pop-up color purchase via PayPal ($1.99)."""
+        if self.need_login(user):
+            return
+        f = self.form()
+        item = con.execute(
+            "SELECT * FROM popup_items WHERE id=? AND sold=0",
+            (f.get("popup_id"),)).fetchone()
+        if not item:
+            self.send_html(page("Shop",
+                                 "<p class='err'>That pop-up color is no "
+                                 "longer for sale.</p>", user))
+            return
+        url = self.begin_paypal_purchase(con, user, "popup", item["cert"],
+                                         item["price"])
+        if url:
+            self.redirect(url)
+
+    def do_buy_popup_stripe(self, con, user):
+        """Start a pop-up color purchase via Cash App Pay."""
+        if self.need_login(user):
+            return
+        f = self.form()
+        item = con.execute(
+            "SELECT * FROM popup_items WHERE id=? AND sold=0",
+            (f.get("popup_id"),)).fetchone()
+        if not item:
+            self.send_html(page("Shop",
+                                 "<p class='err'>That pop-up color is no "
+                                 "longer for sale.</p>", user))
+            return
+        url = self.begin_stripe_purchase(
+            con, user, "popup", item["cert"],
+            int(round(float(item["price"]) * 100)), item["price"],
+            "Pop-up %s (%s)" % (item["name"], item["cert"]))
+        if url:
+            self.redirect(url)
+
+    def do_claim_gift(self, con, user):
+        """Claim the monthly gift: one free baby per user per calendar
+        month, only after at least one completed purchase that month.
+        The baby is a random starter-pool baby (any tribe but Blacks)."""
+        if self.need_login(user):
+            return
+        month, bought, claimed = monthly_gift_state(con, user["id"])
+        if claimed:
+            self.send_html(page(
+                "Monthly gift",
+                "<p class='err'>You already claimed your monthly gift "
+                "for %s.</p>" % esc(month), user))
+            return
+        if not bought:
+            self.send_html(page(
+                "Monthly gift",
+                "<p class='err'>The monthly gift needs at least one "
+                "completed purchase this month — buy something in the "
+                "<a href='/shop'>Shop</a> first.</p>", user))
+            return
+        tribe = random.choice(list(STARTERS))
+        cert = mint_baby(con, user["id"], tribe=tribe)
+        con.execute(
+            "INSERT INTO monthly_gifts (user_id, month, baby_cert)"
+            " VALUES (?,?,?)", (user["id"], month, cert))
+        con.commit()
+        self.redirect("/me?msg=Monthly+gift+claimed!")
+
+    def choice_baby_form(self, con, user):
+        """Pick-and-name form for an earned choice baby (same pattern
+        as signup step 2: pick a starter-roster character, name it)."""
+        if self.need_login(user):
+            return
+        avail, done, earned, claimed = choice_progress(con, user["id"])
+        if avail <= 0:
+            body = ("<p>You have no choice baby to claim right now.</p>"
+                    "<p>Shop purchases so far: %d — %d more until your "
+                    "next choice baby (one per 5 purchases).</p>"
+                    "<p><a href='/shop'>Visit the Shop</a>.</p>"
+                    % (done, 5 - (done % 5)))
+        else:
+            opts = ""
+            for tribe in STARTERS:
+                opts += "<optgroup label='%s'>" % esc(tribe)
+                for name in STARTERS[tribe]["names"]:
+                    opts += "<option value='%s'>%s</option>" % (
+                        esc(name), esc(name))
+                opts += "</optgroup>"
+            body = ("<p>You have <b>%d choice hoodie %s</b> to claim "
+                    "(earned: %d, claimed: %d).</p>"
+                    "<form method='post' action='/choice_baby'>"
+                    "Tribe: <select name='tribe'>"
+                    "<option value='Blues'>Blues</option>"
+                    "<option value='Browns'>Browns</option>"
+                    "<option value='Reds'>Reds</option></select><br>"
+                    "Character: <select name='roster_name'>%s</select><br>"
+                    "Name it (blank keeps the roster name): "
+                    "<input name='baby_name' maxlength='40'><br>"
+                    "<button>Claim my choice baby</button></form>"
+                    % (avail, "baby" if avail == 1 else "babies",
+                       earned, claimed, opts))
+        self.send_html(page("Choice hoodie baby", body, user))
+
+    def do_choice_baby(self, con, user):
+        """Grant one earned choice baby, picked and named by the user."""
+        if self.need_login(user):
+            return
+        avail, _, _, _ = choice_progress(con, user["id"])
+        if avail <= 0:
+            self.send_html(page(
+                "Choice hoodie baby",
+                "<p class='err'>You have no choice baby to claim right "
+                "now — one is earned per 5 shop purchases.</p>", user))
+            return
+        f = self.form()
+        tribe = f.get("tribe") or ""
+        roster = (f.get("roster_name") or "").strip()
+        if tribe not in STARTERS or \
+                roster not in STARTERS[tribe]["names"]:
+            self.send_html(page(
+                "Choice hoodie baby",
+                "<p class='err'>Please pick one of the starter "
+                "characters for your chosen tribe.</p>", user))
+            return
+        baby_name = (f.get("baby_name") or "").strip()[:40] or roster
+        cert = mint_baby(con, user["id"], tribe=tribe, name=baby_name)
+        con.execute(
+            "INSERT INTO choice_claims (user_id, baby_cert)"
+            " VALUES (?,?)", (user["id"], cert))
+        con.commit()
+        self.redirect("/me?msg=Choice+baby+claimed!")
 
     def grant_success_message(self, kind, name, cert, extra):
         """Success line for a granted purchase."""

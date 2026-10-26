@@ -189,6 +189,31 @@ def main():
           "<script>" not in svg_evil and "&lt;script&gt;" in svg_evil)
     check("small portrait size honored",
           "width='72'" in escamo_app.portrait_svg(blue, 72))
+    # Realistic photos: name-matched characters resolve to a photo
+    # file, Blacks babies always use the Black Miner photo, and
+    # anything else keeps the SVG portrait.
+    check("realistic photo file for Harbor",
+          escamo_app.realistic_img_file({"name": "Harbor",
+                                         "tribe": "Blues"})
+          == "harbor.jpg")
+    check("realistic photo file for Blacks babies",
+          escamo_app.realistic_img_file({"name": "Onyx",
+                                         "tribe": "Blacks"})
+          == "black-miner.jpg")
+    check("realistic photo file for gods",
+          escamo_app.realistic_img_file({"name": "Muzle Back",
+                                         "tribe": "Gods"})
+          == "muzle-back.jpg")
+    check("no realistic photo for starter babies",
+          escamo_app.realistic_img_file({"name": "Marina",
+                                         "tribe": "Blues"}) is None)
+    check("photo html uses img tag when file exists",
+          "<img src='/img/harbor.jpg'" in
+          escamo_app.baby_img_html({"name": "Harbor",
+                                    "tribe": "Blues"}))
+    check("photo html falls back to SVG without a photo",
+          "<svg" in escamo_app.baby_img_html({"name": "Marina",
+                                              "tribe": "Blues"}))
     if os.path.exists(DB):
         os.remove(DB)
     env = dict(os.environ, PORT=str(PORT), ESCAMO_DB=DB)
@@ -305,7 +330,8 @@ def main():
               "Diamond eyes" in world_html)
         # 9. Weekly Black listing + 1,200-point gate
         s, browse_html = get(alice, "/browse")
-        check("trade board shows portraits", "<svg" in browse_html)
+        check("trade board shows a picture (photo or portrait)",
+              "<svg" in browse_html or "/img/" in browse_html)
         check("trade board shows weekly Black", "Blacks" in browse_html)
         check("trade board shows 1,200-point gate", "1,200" in browse_html)
         check("trade board says Underground auto-accepts",
@@ -1260,6 +1286,396 @@ def main():
                 hproc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 hproc.kill()
+
+        # 16. Deals, monthly gift, choice babies, pop-ups, ownership,
+        # gender (mocked PayPal server).
+        check("deal price 25% off $1.99 is $1.49",
+              escamo_app.deal_price("1.99", 0.25) == "1.49")
+        check("deal price half off $1.99 is $1.00",
+              escamo_app.deal_price("1.99", 0.50) == "1.00")
+        mem = sqlite3.connect(":memory:")
+        mem.row_factory = sqlite3.Row
+        mem.execute("CREATE TABLE shop_items (id INTEGER PRIMARY KEY,"
+                    " cert TEXT)")
+        for i in range(12):
+            mem.execute("INSERT INTO shop_items (id, cert) VALUES (?,?)",
+                        (i + 1, "EHB-S%03d" % (i + 1)))
+        picks_a = escamo_app.weekly_deal_picks(mem)
+        picks_b = escamo_app.weekly_deal_picks(mem)
+        check("weekly deal picks are deterministic",
+              picks_a == picks_b)
+        check("weekly deal picks are 25% or 50% off, at most 4",
+              len(picks_a) <= 4
+              and set(picks_a.values()) <= {0.25, 0.50}
+              and len(picks_a) >= 1)
+        mem.close()
+        check("Blacks are always male",
+              escamo_app.baby_gender("Blacks", "Underground Veil",
+                                     "black stones") == "male")
+        check("leaders are female by name",
+              escamo_app.baby_gender("Blues", "Sea Crown",
+                                     "blue rhinestones",
+                                     name="Damiana June") == "female"
+              and escamo_app.baby_gender("Browns", "Forest Canopy",
+                                         "green rhinestones",
+                                         name="Aaliyah Bee") == "female"
+              and escamo_app.baby_gender("Reds", "Sky Veil",
+                                         "red rhinestones",
+                                         name="Jazmyn") == "female")
+        check("leaders are female by certificate",
+              escamo_app.baby_gender("Blues", "Sea Crown",
+                                     "blue rhinestones",
+                                     cert="EHB-L001") == "female")
+        check("gods are male",
+              escamo_app.baby_gender("Gods", "God Crown",
+                                     "gold rhinestones") == "male")
+        check("regular babies have no gender marker",
+              escamo_app.baby_gender("Blues", "Deep Diamond",
+                                     "yellow + green rhinestones") is None
+              and escamo_app.baby_gender("Blues", "Wave Crest",
+                                         "yellow + green rhinestones")
+              is None)
+        bport, bdb = 8101, "/tmp/escamo_bundle_test.db"
+        bproc, bbase = start_server(bport, bdb, {"PAYPAL_MOCK": "1"})
+        try:
+            dana = http.cookiejar.CookieJar()
+            s, _ = signup_full(dana, "dana", "secret9",
+                               tribe="Blues", roster="Marina",
+                               base=bbase)
+            check("dana signs up on bundle server", s in (200, 302))
+            bcon = sqlite3.connect(bdb)
+            bcon.row_factory = sqlite3.Row
+            dana_row = bcon.execute(
+                "SELECT * FROM users WHERE username='dana'").fetchone()
+
+            def buy_and_capture(jar, path, data):
+                s, hdrs, _ = post_noredirect(jar, path, data,
+                                             base=bbase)
+                loc = hdrs.get("Location", "")
+                if "buy_return" not in loc:
+                    return s, ""
+                parsed = urllib.parse.urlparse(loc)
+                ret = parsed.path + ("?" + parsed.query
+                                     if parsed.query else "")
+                return get(jar, ret, base=bbase)
+
+            s, shop_html = get(dana, "/shop", base=bbase)
+            check("shop shows deals shelf",
+                  "Deals of the week" in shop_html)
+            check("shop shows struck-through deal price",
+                  "<s>$1.99</s>" in shop_html)
+            check("shop shows pop-up color section",
+                  "New color pop-up" in shop_html)
+            s, notices_html = get(dana, "/notices", base=bbase)
+            check("notices board announces the pop-up",
+                  "popped up" in notices_html)
+            # Monthly gift needs a purchase first.
+            nb = bcon.execute(
+                "SELECT COUNT(*) FROM babies WHERE owner_id=?",
+                (dana_row["id"],)).fetchone()[0]
+            s, gift_html = post(dana, "/claim_gift", {}, base=bbase)
+            check("monthly gift refused without a purchase",
+                  "at least one" in gift_html)
+            nb2 = bcon.execute(
+                "SELECT COUNT(*) FROM babies WHERE owner_id=?",
+                (dana_row["id"],)).fetchone()[0]
+            check("refused gift grants no baby", nb2 == nb)
+            # Deal buy: current deal pick at its sale price.
+            picks = escamo_app.weekly_deal_picks(bcon)
+            deal_cert = sorted(picks)[0]
+            deal_item = bcon.execute(
+                "SELECT * FROM shop_items WHERE cert=?",
+                (deal_cert,)).fetchone()
+            sale = escamo_app.deal_price(deal_item["price"],
+                                         picks[deal_cert])
+            s, ret_html = buy_and_capture(
+                dana, "/buy", {"shop_item_id": deal_item["id"],
+                               "deal": "1"})
+            check("deal purchase completes",
+                  "Payment complete" in ret_html, "status=%s" % s)
+            pur = bcon.execute(
+                "SELECT * FROM purchases WHERE user_id=? ORDER BY id "
+                "DESC", (dana_row["id"],)).fetchone()
+            check("deal purchase recorded at sale price",
+                  pur is not None and pur["status"] == "completed"
+                  and pur["amount"] == sale,
+                  "amount=%s sale=%s" % (
+                      pur["amount"] if pur else None, sale))
+            baby = bcon.execute(
+                "SELECT * FROM babies WHERE cert=?",
+                (deal_cert,)).fetchone()
+            check("deal purchase grants the baby",
+                  baby is not None
+                  and baby["owner_id"] == dana_row["id"])
+            # deal=1 on a non-deal item still charges full price.
+            plain = bcon.execute(
+                "SELECT * FROM shop_items WHERE sold=0 AND cert NOT IN "
+                "(%s) ORDER BY id"
+                % ",".join("?" * len(picks)),
+                list(picks)).fetchone()
+            s, ret_html = buy_and_capture(
+                dana, "/buy", {"shop_item_id": plain["id"],
+                               "deal": "1"})
+            pur = bcon.execute(
+                "SELECT * FROM purchases WHERE user_id=? ORDER BY id "
+                "DESC", (dana_row["id"],)).fetchone()
+            check("deal flag on non-deal item charges full price",
+                  pur is not None and pur["amount"] == "1.99",
+                  "amount=%s" % (pur["amount"] if pur else None))
+            # Monthly gift now available, once only.
+            s, _ = post(dana, "/claim_gift", {}, base=bbase)
+            nb3 = bcon.execute(
+                "SELECT COUNT(*) FROM babies WHERE owner_id=?",
+                (dana_row["id"],)).fetchone()[0]
+            check("monthly gift grants one baby", nb3 == nb2 + 3,
+                  "was %d now %d" % (nb2, nb3))
+            grow = bcon.execute(
+                "SELECT * FROM monthly_gifts WHERE user_id=?",
+                (dana_row["id"],)).fetchone()
+            check("monthly gift recorded", grow is not None)
+            s, _ = post(dana, "/claim_gift", {}, base=bbase)
+            nb4 = bcon.execute(
+                "SELECT COUNT(*) FROM babies WHERE owner_id=?",
+                (dana_row["id"],)).fetchone()[0]
+            check("second monthly gift in same month grants nothing",
+                  nb4 == nb3)
+            s, home_html = get(dana, "/", base=bbase)
+            check("home shows monthly gift claimed",
+                  "Monthly gift claimed" in home_html)
+            # Choice baby: 3 more purchases reach 5 completed.
+            for _ in range(3):
+                nxt = bcon.execute(
+                    "SELECT * FROM shop_items WHERE sold=0 ORDER BY id"
+                    ).fetchone()
+                buy_and_capture(dana, "/buy", {"shop_item_id": nxt["id"]})
+            done = bcon.execute(
+                "SELECT COUNT(*) FROM purchases WHERE user_id=? AND "
+                "status='completed'", (dana_row["id"],)).fetchone()[0]
+            check("dana reaches 5 completed purchases", done == 5,
+                  "got %d" % done)
+            s, choice_html = get(dana, "/choice_baby", base=bbase)
+            check("choice baby form shows when milestone reached",
+                  "Claim my choice baby" in choice_html)
+            nb5 = bcon.execute(
+                "SELECT COUNT(*) FROM babies WHERE owner_id=?",
+                (dana_row["id"],)).fetchone()[0]
+            s, _ = post(dana, "/choice_baby",
+                        {"tribe": "Blues", "roster_name": "Ember"},
+                        base=bbase)
+            nb6 = bcon.execute(
+                "SELECT COUNT(*) FROM babies WHERE owner_id=?",
+                (dana_row["id"],)).fetchone()[0]
+            check("mismatched tribe/roster choice grants nothing",
+                  nb6 == nb5)
+            s, _ = post(dana, "/choice_baby",
+                        {"tribe": "Reds", "roster_name": "Ember",
+                         "baby_name": "MyChoice"}, base=bbase)
+            nb7 = bcon.execute(
+                "SELECT COUNT(*) FROM babies WHERE owner_id=?",
+                (dana_row["id"],)).fetchone()[0]
+            check("choice baby grants picked and named baby",
+                  nb7 == nb5 + 1)
+            chosen = bcon.execute(
+                "SELECT * FROM babies WHERE owner_id=? AND name=?",
+                (dana_row["id"], "MyChoice")).fetchone()
+            check("choice baby is a Reds baby",
+                  chosen is not None and chosen["tribe"] == "Reds")
+            crow = bcon.execute(
+                "SELECT * FROM choice_claims WHERE user_id=?",
+                (dana_row["id"],)).fetchone()
+            check("choice claim recorded", crow is not None)
+            s, choice_html = get(dana, "/choice_baby", base=bbase)
+            check("choice milestone spent after claim",
+                  "no choice baby to claim" in choice_html)
+            # Pop-up buy.
+            popup = bcon.execute(
+                "SELECT * FROM popup_items WHERE sold=0 ORDER BY id"
+                ).fetchone()
+            check("weekly pop-up item exists", popup is not None)
+            s, ret_html = buy_and_capture(
+                dana, "/buy_popup", {"popup_id": popup["id"]})
+            check("pop-up purchase completes",
+                  "Payment complete" in ret_html)
+            ppur = bcon.execute(
+                "SELECT * FROM purchases WHERE user_id=? AND "
+                "item_type='popup' ORDER BY id DESC",
+                (dana_row["id"],)).fetchone()
+            check("pop-up purchase recorded at $1.99",
+                  ppur is not None and ppur["status"] == "completed"
+                  and ppur["amount"] == "1.99")
+            pbaby = bcon.execute(
+                "SELECT * FROM babies WHERE cert=?",
+                (popup["cert"],)).fetchone()
+            check("pop-up purchase grants the baby",
+                  pbaby is not None
+                  and pbaby["owner_id"] == dana_row["id"])
+            # Ownership: dana buys Damiana June, then trades her away.
+            ld = bcon.execute(
+                "SELECT * FROM leaders WHERE name='Damiana June'"
+                ).fetchone()
+            s, ret_html = buy_and_capture(
+                dana, "/buy_leader", {"leader_id": ld["id"]})
+            check("leader purchase completes",
+                  "Payment complete" in ret_html)
+            s, world_html = get(dana, "/world", base=bbase)
+            check("world shows dana as Blues owner",
+                  "Owner: dana" in world_html)
+            s, me_html = get(dana, "/me", base=bbase)
+            check("owner home shows Blues ownership",
+                  "Owner of the Blues tribe" in me_html)
+            erin = http.cookiejar.CookieJar()
+            s, _ = signup_full(erin, "erin", "secret9",
+                               tribe="Blues", roster="Coral",
+                               base=bbase)
+            fred = http.cookiejar.CookieJar()
+            s, _ = signup_full(fred, "fred", "secret9",
+                               tribe="Blues", roster="Pearl",
+                               base=bbase)
+            s, world_html = get(dana, "/world", base=bbase)
+            check("world shows second and third of the tribe",
+                  "Second: erin" in world_html
+                  and "Third: fred" in world_html)
+            leader_baby = bcon.execute(
+                "SELECT * FROM babies WHERE cert='EHB-L001'").fetchone()
+            s, _ = post(dana, "/toggle_trade",
+                        {"baby_id": leader_baby["id"]}, base=bbase)
+            s, _ = post(erin, "/offer",
+                        {"wanted_baby_id": leader_baby["id"],
+                         "offered_points": "0"}, base=bbase)
+            off = bcon.execute(
+                "SELECT * FROM offers WHERE from_user=(SELECT id FROM "
+                "users WHERE username='erin') AND status='pending'"
+                ).fetchone()
+            check("erin offers for the leader", off is not None)
+            s, _ = post(dana, "/offer_action",
+                        {"offer_id": off["id"], "action": "accept"},
+                        base=bbase)
+            s, world_html = get(dana, "/world", base=bbase)
+            check("ownership passes when leader is traded",
+                  "Owner: erin" in world_html)
+            # Gender markers under the corrected rule: leaders female,
+            # Blacks and gods male, regular babies unmarked.
+            leader_row = bcon.execute(
+                "SELECT gender FROM babies WHERE cert='EHB-L001'"
+                ).fetchone()
+            check("leader baby row is female",
+                  leader_row is not None
+                  and leader_row["gender"] == "female")
+            black_row = bcon.execute(
+                "SELECT gender FROM babies WHERE tribe='Blacks'"
+                ).fetchone()
+            check("Black baby row is male",
+                  black_row is not None
+                  and black_row["gender"] == "male")
+            marked_regular = bcon.execute(
+                "SELECT COUNT(*) FROM babies WHERE gender IS NOT NULL "
+                "AND cert NOT LIKE 'EHB-L%' "
+                "AND tribe NOT IN ('Blacks', 'Gods')").fetchone()[0]
+            check("regular babies have no stored gender",
+                  marked_regular == 0, "marked=%d" % marked_regular)
+            s, erin_me = get(erin, "/me", base=bbase)
+            check("leader card shows the female marker",
+                  "♀" in erin_me)
+            s, browse_html = get(dana, "/browse", base=bbase)
+            check("Black card shows the male marker",
+                  "♂" in browse_html)
+            s, shop2_html = get(dana, "/shop", base=bbase)
+            check("god card shows the male marker",
+                  "♂" in shop2_html)
+            # Realistic photos over HTTP: the /img route serves the
+            # 19 photos, rejects traversal, and cards use them with
+            # SVG fallback for babies without a photo.
+            def get_raw(path):
+                conn = http.client.HTTPConnection(
+                    "127.0.0.1", PORT, timeout=10)
+                conn.request("GET", path)
+                resp = conn.getresponse()
+                body = resp.read()
+                headers = dict(resp.getheaders())
+                conn.close()
+                return resp.status, headers, body
+
+            photo_files = [
+                "harbor.jpg", "lagoon.jpg", "reef.jpg", "drift.jpg",
+                "birch.jpg", "cedar.jpg", "alder.jpg", "aspen.jpg",
+                "sol.jpg", "nova.jpg", "zephyr.jpg", "flare.jpg",
+                "damiana-june.jpg", "aaliyah-bee.jpg", "jazmyn.jpg",
+                "muzle-back.jpg", "baraka.jpg", "sirus-v.jpg",
+                "black-miner.jpg",
+            ]
+            photos_ok = True
+            for fname in photo_files:
+                st, hdrs, body = get_raw("/img/" + fname)
+                if not (st == 200
+                        and hdrs.get("Content-Type") == "image/jpeg"
+                        and len(body) > 5000):
+                    photos_ok = False
+            check("image route serves all 19 photos", photos_ok)
+            st, _, _ = get_raw("/img/../app.py")
+            check("image route rejects dot-dot traversal", st == 404)
+            st, _, _ = get_raw("/img/%2e%2e%2fapp.py")
+            check("image route rejects encoded traversal", st == 404)
+            st, _, _ = get_raw("/img/nope.jpg")
+            check("image route 404s unknown files", st == 404)
+            st, _, _ = get_raw("/img/HARBOR.JPG")
+            check("image route is case-sensitive", st == 404)
+            s, shop_html = get(http.cookiejar.CookieJar(), "/shop")
+            check("shop cards reference realistic photos",
+                  "/img/harbor.jpg" in shop_html
+                  and "/img/damiana-june.jpg" in shop_html
+                  and "/img/muzle-back.jpg" in shop_html)
+            photo_jar = http.cookiejar.CookieJar()
+            s, _ = signup_full(photo_jar, "photo", "secret9",
+                               tribe="Blues", roster="Marina")
+            mcon = sqlite3.connect(DB)
+            mcon.row_factory = sqlite3.Row
+            photo_row = mcon.execute(
+                "SELECT * FROM users WHERE username='photo'").fetchone()
+            # A listed Black baby (the weekly sale may already have
+            # been bought by this point in the suite, so list one
+            # directly for the board check).
+            mcon.execute(
+                "INSERT INTO babies (cert, owner_id, name, tribe,"
+                " hoodie_pattern, stones, face, for_trade)"
+                " VALUES (?,?,?,?,?,?,?,1)",
+                ("EHB-TEST-BLK", photo_row["id"], "Onyx", "Blacks",
+                 "Underground Veil", "black stones on all-white hoodie",
+                 "angry creature-like"))
+            mcon.commit()
+            mcon.close()
+            # The board hides the viewer's own babies, so check it
+            # with a second logged-in user.
+            board_jar = http.cookiejar.CookieJar()
+            s, _ = signup_full(board_jar, "board", "secret9",
+                               tribe="Reds", roster="Ember")
+            s, browse2_html = get(board_jar, "/browse")
+            check("board Black listing uses the Black photo",
+                  "/img/black-miner.jpg" in browse2_html)
+            mcon = sqlite3.connect(DB)
+            mcon.row_factory = sqlite3.Row
+            photo_row = mcon.execute(
+                "SELECT * FROM users WHERE username='photo'").fetchone()
+            mcon.execute(
+                "INSERT INTO babies (cert, owner_id, name, tribe,"
+                " hoodie_pattern, stones, face)"
+                " VALUES (?,?,?,?,?,?,?)",
+                ("EHB-TEST-HARBOR", photo_row["id"], "Harbor", "Blues",
+                 "Guiding Star", "yellow + green rhinestones",
+                 "fish-like"))
+            mcon.commit()
+            mcon.close()
+            s, me_html = get(photo_jar, "/me")
+            check("collection Harbor baby shows its photo",
+                  "/img/harbor.jpg" in me_html)
+            check("collection starter baby keeps SVG fallback",
+                  "<svg" in me_html)
+            bcon.close()
+        finally:
+            bproc.terminate()
+            try:
+                bproc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                bproc.kill()
     finally:
         proc.terminate()
         try:

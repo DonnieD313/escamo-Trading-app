@@ -120,6 +120,53 @@ Then open **http://127.0.0.1:8090** in a browser.
   First Beginnings arrivals; new custom characters and each weekly Black
   append a notice).
 
+## Deals, monthly gift, choice babies, pop-ups, ownership, gender
+
+- **Deals of the week (Shop):** each ISO week, a rotating set of up to 4
+  unsold individual characters is discounted — alternating 25% off and
+  half off (50%). The pick is seeded by the week number, so it is stable
+  all week and changes next week. Deal items are sold only from the shelf,
+  showing the original price struck through plus the sale price ($1.99 at
+  25% off is $1.49, at half off is $1.00); the regular list skips them.
+  Buying from the shelf charges the sale price through the normal
+  PayPal/Stripe flow. Discounts apply to individual characters only —
+  never points packs, leaders, or gods.
+- **Monthly gift:** a user with at least one completed purchase in the
+  current calendar month can claim one free baby that month (button on
+  Home and in the Shop). The baby is a random starter-pool baby (any
+  tribe except Blacks) with a unique certificate. One claim per user per
+  calendar month; no purchase that month means no gift.
+- **Choice babies:** every 5 cumulative completed shop purchases earns a
+  choice baby (milestones at 5, 10, 15, ...). The user picks one baby
+  from the starter rosters and names it (same pick-and-name pattern as
+  signup step 2). Unclaimed milestones stay visible on Home and in the
+  Shop and can be claimed later — they are never lost.
+- **Pop-up new colors:** each week one new color variant (a new
+  pattern + rhinestone combination on an existing tribe) appears in the
+  Shop as a limited pop-up purchase at $1.99, plus a notice on the
+  Notices board saying what popped up and where it was found (Blues by
+  the sea, Browns in the woods, Reds in the sky). Only the current
+  week's pop-up is listed. No new tribe names were invented: the
+  rotation reads the starter-tribe data, so a tribe added there later
+  joins the rotation automatically.
+- **Tribe ownership:** buying a tribe's leader makes the buyer the Owner
+  of that tribe — Damiana June owns the Blues, Aaliyah Bee owns the
+  Browns, Jazmyn owns the Reds. The Owner title shows on the World page
+  and on the owner's own collection page. If the leader is traded away,
+  ownership passes to the new holder (same follows-ownership rule as
+  the trade-slot perk). 2nd and 3rd places per tribe are the two users
+  other than the owner holding the most babies of that tribe (ties
+  broken by username) — titles only, no extra perks.
+- **Gender:** leaders are female, Blacks and gods are male, every other
+  baby has no gender marker — shown as a small ♂/♀ marker on cards
+  where it applies. No inference from hoodie colors. Existing babies
+  are corrected to this rule on startup. Leaders are not relabeled as
+  queens/kings beyond the ownership titles.
+- **Defaults Doneil can correct:** the 25%/50% deal split and 4-pick
+  shelf; the 1-purchase monthly-gift threshold; choice babies counting
+  all completed shop purchases (including points packs); the pop-up
+  price ($1.99).
+
 ## Test: two users completing a trade end-to-end
 
 Automated test (drives the real server over HTTP, then checks the database):
@@ -335,6 +382,6 @@ login and card.
   so a reset would need a separate design (e.g. an admin reset or a
   security question). Sessions expire and logins are rate-limited, but
   a forgotten password currently has no self-serve recovery.
-- **Photos/artwork:** babies are described in text (pattern, stones, face).
-  The artifact demo page has the artwork; this app's visuals are plain by
-  design.
+- **Photos/artwork:** babies now have inline-SVG portraits rendered from
+  their stored attributes (tribe, pattern, stones, certificate) on
+  collection, board, offer, and shop cards.
