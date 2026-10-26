@@ -1,0 +1,2278 @@
+#!/usr/bin/env python3
+"""Escamo Hoodie Babies Trade - real multi-user trading app.
+
+Standard library only: http.server + sqlite3. No paid services, no accounts
+beyond a local username/password (passwords are hashed with PBKDF2, never
+stored in plain text).
+
+Run:  python3 app.py            (listens on http://127.0.0.1:8090)
+Env:  PORT, HOST (default 127.0.0.1; set to 0.0.0.0 only behind a
+      reverse proxy with HTTPS), ESCAMO_DB (database path, default
+      ./app.db), COOKIE_SECURE (set to 1 when running behind HTTPS so
+      cookies get the Secure flag), SESSION_MAX_AGE_DAYS (default 7),
+      PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_MODE (default
+      "sandbox"), PUBLIC_BASE_URL (for PayPal/Stripe return URLs),
+      STRIPE_SECRET_KEY, STRIPE_MODE (default "test").
+"""
+import base64
+import datetime
+import hashlib
+import html
+import json
+import os
+import random
+import re
+import secrets
+import sqlite3
+import string
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+BASE = os.path.dirname(os.path.abspath(__file__))
+DB = os.environ.get("ESCAMO_DB", os.path.join(BASE, "app.db"))
+PORT = int(os.environ.get("PORT", "8090"))
+HOST = os.environ.get("HOST", "127.0.0.1")
+# Set COOKIE_SECURE=1 when the app runs behind HTTPS so session and
+# CSRF cookies are only sent over secure connections. It stays off by
+# default so plain localhost testing keeps working.
+COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "") == "1"
+SESSION_MAX_AGE_DAYS = int(os.environ.get("SESSION_MAX_AGE_DAYS", "7"))
+
+# ---------------------------------------------------------------- rate limiting
+# In-memory, per-process: repeated failed logins/signups from one IP are
+# blocked for a while so passwords can't be brute-forced. A single
+# process serves this app, so one dict is enough; a multi-process
+# deployment would need shared storage instead.
+RATE_LIMIT_MAX_FAILS = 5
+RATE_LIMIT_WINDOW_SECS = 600  # failures counted over the last 10 minutes
+_rate_fails = {}  # key -> list of failure timestamps
+
+
+def rate_blocked(key):
+    now = time.time()
+    hits = [t for t in _rate_fails.get(key, [])
+            if now - t < RATE_LIMIT_WINDOW_SECS]
+    _rate_fails[key] = hits
+    return len(hits) >= RATE_LIMIT_MAX_FAILS
+
+
+def rate_record_fail(key):
+    _rate_fails.setdefault(key, []).append(time.time())
+
+
+def rate_clear(key):
+    _rate_fails.pop(key, None)
+
+# ---------------------------------------------------------------- starter data
+# Baby names for Blues are sea/ocean names (per Doneil's spec). The Blues
+# are exactly five characters, not including their leader Damiana June.
+# Browns/Reds starter names below are placeholders he can replace.
+STARTERS = {
+    "Blues": {
+        "names": ["Marina", "Coral", "Pearl", "Tide", "Kai"],
+        "patterns": ["Guiding Star", "Three Rivers", "Whirlpool Bloom",
+                     "Sunrise Over the Bay", "Deep Diamond", "Wave Crest",
+                     "Tidal Swirl", "Moonlit Surf"],
+        "stones": "yellow + green rhinestones",
+        "face": "fish-like",
+        "prefix": "B",
+    },
+    "Browns": {
+        "names": ["Willow", "Fern", "Hazel", "Rowan", "Ivy", "Maple",
+                  "Juniper", "Sage"],
+        "patterns": ["Forest Canopy", "Moss Ring", "Acorn Trail",
+                     "Fern Frond", "Bark Weave", "Meadow Light"],
+        "stones": "amber + gold rhinestones",
+        "face": "animal-like",
+        "prefix": "BR",
+    },
+    "Reds": {
+        "names": ["Ember", "Storm", "Skye", "Ash", "Blaze", "Aurora",
+                  "Cinder", "Tempest"],
+        "patterns": ["Storm Wing", "Sky Fire", "Cloud Break", "Ember Trail",
+                     "Thunder Crest", "Sunset Veil"],
+        "stones": "red stones",
+        "face": "angel-like",
+        "prefix": "R",
+    },
+}
+
+# Blacks ARE the Miners: no ruler, scavengers, underground-raised. One pops
+# up for sale each week. Black names below are placeholders until Doneil
+# names them.
+BLACKS_ROSTER = [
+    {"name": "Onyx", "pattern": "Underground Veil"},
+    {"name": "Shadow", "pattern": "Cave Spark"},
+    {"name": "Coal", "pattern": "Deep Tunnel"},
+    {"name": "Midnight", "pattern": "Night Dig"},
+    {"name": "Slate", "pattern": "Stone Path"},
+    {"name": "Umbra", "pattern": "Hidden Pocket"},
+]
+BLACK_STONES = "black stones on all-white hoodie"
+BLACK_FACE = "angry creature-like"
+
+# Display-only prices. Real-money purchases stay pending a payment
+# provider choice — nothing here charges anyone.
+PRICE_LEADER = "10.00"
+PRICE_INDIVIDUAL = "1.99"
+PRICE_GOD = "40.00"
+GOD_COUNT = 3
+BLACK_TRADE_MIN_POINTS = 1200
+
+# Leaders: the three unique founders. Each can be bought once; once sold,
+# that leader is unavailable to other buyers. A bought leader joins the
+# buyer's collection and trades like any other baby.
+LEADERS = [
+    {"cert": "EHB-L001", "name": "Damiana June", "tribe": "Blues",
+     "pattern": "Guiding Star", "stones": "yellow + green rhinestones",
+     "face": "fish-like, surprised crying look"},
+    {"cert": "EHB-L002", "name": "Aaliyah Bee", "tribe": "Browns",
+     "pattern": "Forest Canopy",
+     "stones": "amber + gold rhinestones, red stone in forehead",
+     "face": "animal-like, grouchy"},
+    {"cert": "EHB-L003", "name": "Jazmyn", "tribe": "Reds",
+     "pattern": "All-black hoodie, diamond head, wand with fire-red tip",
+     "stones": "stones of every different color on all-black hoodie",
+     "face": "angel-like, slight curious smile"},
+]
+
+# Gods: exactly 3, named by Doneil (spellings exactly as he wrote them).
+GODS = [
+    {"cert": "EHB-G001", "name": "Muzle Back"},
+    {"cert": "EHB-G002", "name": "Baraka"},
+    {"cert": "EHB-G003", "name": "Sirus V"},
+]
+
+# Points packs: (points, price). Bought points add to balance only and
+# never count toward the character-creator unlock (trade-earned only).
+POINTS_PACKS = [
+    (300, "1.99"), (600, "3.99"), (900, "9.99"), (1200, "20.00"),
+]
+POINTS_PACK_PRICES = {n: p for n, p in POINTS_PACKS}
+
+# ---------------------------------------------------------------- PayPal
+# PayPal checkout. Credentials come ONLY from environment variables —
+# never hardcode or store them in the repo. Default mode is sandbox, so
+# no real money moves until PAYPAL_MODE=live AND live credentials are set
+# AND the app is publicly hosted over HTTPS.
+PAYPAL_MODE = os.environ.get("PAYPAL_MODE", "sandbox").lower()
+PAYPAL_CLIENT_ID = os.environ.get("PAYPAL_CLIENT_ID", "")
+PAYPAL_CLIENT_SECRET = os.environ.get("PAYPAL_CLIENT_SECRET", "")
+PAYPAL_BASE = ("https://api-m.paypal.com" if PAYPAL_MODE == "live"
+               else "https://api-m.sandbox.paypal.com")
+# PAYPAL_MOCK=1 is a TEST-ONLY switch: it replaces PayPal HTTP calls with
+# canned responses so tests never touch the real PayPal API. Never set it
+# for a real deployment.
+PAYPAL_MOCK = os.environ.get("PAYPAL_MOCK", "") == "1"
+PUBLIC_BASE_URL = (os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+                   or "http://127.0.0.1:%d" % PORT)
+_mock_order_counter = [0]
+
+
+class PayPalError(Exception):
+    pass
+
+
+def paypal_configured():
+    return PAYPAL_MOCK or bool(PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET)
+
+
+def _paypal_http(method, path, token=None, data=None, basic=None):
+    """One PayPal REST call (stdlib urllib only). Returns parsed JSON."""
+    headers = {"Accept": "application/json"}
+    body = None
+    if data is not None:
+        if isinstance(data, dict):
+            body = json.dumps(data).encode()
+            headers["Content-Type"] = "application/json"
+        else:
+            body = data.encode() if isinstance(data, str) else data
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    if basic:
+        headers["Authorization"] = ("Basic " + base64.b64encode(
+            basic.encode()).decode())
+    req = urllib.request.Request(PAYPAL_BASE + path, data=body,
+                                 headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read().decode() or "{}")
+    except urllib.error.HTTPError as e:
+        raise PayPalError("PayPal %s %s failed (%s): %s"
+                          % (method, path, e.code, e.read().decode()))
+    except urllib.error.URLError as e:
+        raise PayPalError("PayPal %s %s unreachable: %s"
+                          % (method, path, e.reason))
+
+
+def paypal_access_token():
+    """OAuth2 client-credentials token."""
+    if PAYPAL_MOCK:
+        return "MOCK-TOKEN"
+    resp = _paypal_http("POST", "/v1/oauth2/token",
+                        data="grant_type=client_credentials",
+                        basic="%s:%s" % (PAYPAL_CLIENT_ID,
+                                         PAYPAL_CLIENT_SECRET))
+    token = resp.get("access_token")
+    if not token:
+        raise PayPalError("PayPal token response had no access_token")
+    return token
+
+
+def paypal_create_order(amount):
+    """Create a CAPTURE order. Returns (order_id, approve_url)."""
+    if PAYPAL_MOCK:
+        _mock_order_counter[0] += 1
+        oid = "MOCK-ORDER-%d" % _mock_order_counter[0]
+        return oid, PUBLIC_BASE_URL + "/buy_return?token=" + oid
+    token = paypal_access_token()
+    resp = _paypal_http("POST", "/v2/checkout/orders", token=token, data={
+        "intent": "CAPTURE",
+        "purchase_units": [{"amount": {"currency_code": "USD",
+                                       "value": amount}}],
+        "application_context": {
+            "return_url": PUBLIC_BASE_URL + "/buy_return",
+            "cancel_url": PUBLIC_BASE_URL + "/buy_cancel",
+        },
+    })
+    oid = resp.get("id")
+    approve = None
+    for link in resp.get("links", []):
+        if link.get("rel") == "approve":
+            approve = link.get("href")
+    if not oid or not approve:
+        raise PayPalError("PayPal order response missing id/approve link")
+    return oid, approve
+
+
+def paypal_capture_order(order_id):
+    """Capture an approved order. Returns the PayPal order status."""
+    if PAYPAL_MOCK:
+        if os.environ.get("PAYPAL_MOCK_CAPTURE") == "fail":
+            return "FAILED"
+        return "COMPLETED"
+    token = paypal_access_token()
+    resp = _paypal_http("POST",
+                        "/v2/checkout/orders/%s/capture" % order_id,
+                        token=token, data={})
+    return resp.get("status", "")
+
+# ---------------------------------------------------------------- Stripe
+# Stripe Checkout with Cash App Pay. The secret key comes ONLY from the
+# STRIPE_SECRET_KEY environment variable — never hardcode or store it in
+# the repo. Default mode is test, so no real money moves until
+# STRIPE_MODE=live AND a live key is set AND the app is publicly hosted
+# over HTTPS.
+STRIPE_MODE = os.environ.get("STRIPE_MODE", "test").lower()
+STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
+STRIPE_BASE = "https://api.stripe.com"
+# STRIPE_MOCK=1 is a TEST-ONLY switch: it replaces Stripe HTTP calls
+# with canned responses so tests never touch the real Stripe API. Never
+# set it for a real deployment.
+STRIPE_MOCK = os.environ.get("STRIPE_MOCK", "") == "1"
+_mock_stripe_counter = [0]
+
+
+class StripeError(Exception):
+    pass
+
+
+def stripe_configured():
+    return STRIPE_MOCK or bool(STRIPE_SECRET_KEY)
+
+
+def _stripe_http(method, path, data=None):
+    """One Stripe REST call (stdlib urllib only, form-encoded).
+    Returns parsed JSON."""
+    headers = {"Authorization": "Bearer " + STRIPE_SECRET_KEY}
+    body = None
+    if data is not None:
+        body = urllib.parse.urlencode(data).encode()
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+    req = urllib.request.Request(STRIPE_BASE + path, data=body,
+                                 headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read().decode() or "{}")
+    except urllib.error.HTTPError as e:
+        raise StripeError("Stripe %s %s failed (%s): %s"
+                          % (method, path, e.code, e.read().decode()))
+    except urllib.error.URLError as e:
+        raise StripeError("Stripe %s %s unreachable: %s"
+                          % (method, path, e.reason))
+
+
+def stripe_create_session(amount_cents, name):
+    """Create a Checkout Session paid with Cash App Pay.
+    Returns (session_id, checkout_url)."""
+    if STRIPE_MOCK:
+        _mock_stripe_counter[0] += 1
+        sid = "MOCK-STRIPE-%d" % _mock_stripe_counter[0]
+        return sid, PUBLIC_BASE_URL + "/stripe_return?session_id=" + sid
+    resp = _stripe_http("POST", "/v1/checkout/sessions", data={
+        "mode": "payment",
+        "payment_method_types[0]": "cashapp",
+        "line_items[0][price_data][currency]": "usd",
+        "line_items[0][price_data][unit_amount]": str(amount_cents),
+        "line_items[0][price_data][product_data][name]": name,
+        "line_items[0][quantity]": "1",
+        "success_url": (PUBLIC_BASE_URL + "/stripe_return"
+                        "?session_id={CHECKOUT_SESSION_ID}"),
+        "cancel_url": (PUBLIC_BASE_URL + "/stripe_cancel"
+                       "?session_id={CHECKOUT_SESSION_ID}"),
+    })
+    sid = resp.get("id")
+    url = resp.get("url")
+    if not sid or not url:
+        raise StripeError("Stripe session response missing id/url")
+    return sid, url
+
+
+def stripe_session_payment_status(session_id):
+    """Retrieve a session and return its payment_status ('paid' on
+    success). The session is verified server-side — the redirect landing
+    alone never grants anything."""
+    if STRIPE_MOCK:
+        if os.environ.get("STRIPE_MOCK_PAYMENT") == "unpaid":
+            return "unpaid"
+        return "paid"
+    resp = _stripe_http("GET",
+                        "/v1/checkout/sessions/%s" % session_id)
+    return resp.get("payment_status", "")
+
+# Shop stock: individual characters for sale at $1.99. Names are distinct
+# from the starter pools so a shop baby never duplicates a starter name.
+SHOP_INDIVIDUALS = [
+    ("Harbor", "Blues"), ("Lagoon", "Blues"), ("Reef", "Blues"),
+    ("Drift", "Blues"),
+    ("Birch", "Browns"), ("Cedar", "Browns"), ("Alder", "Browns"),
+    ("Aspen", "Browns"),
+    ("Sol", "Reds"), ("Nova", "Reds"), ("Zephyr", "Reds"),
+    ("Flare", "Reds"),
+]
+
+# ---------------------------------------------------------------- database
+def db():
+    con = sqlite3.connect(DB)
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA foreign_keys = ON")
+    return con
+
+
+def init_db():
+    con = db()
+    con.executescript("""
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        salt TEXT NOT NULL,
+        points INTEGER NOT NULL DEFAULT 300,
+        points_earned INTEGER NOT NULL DEFAULT 0,
+        creator_slots_used INTEGER NOT NULL DEFAULT 0,
+        invite_code TEXT UNIQUE NOT NULL,
+        invited_by INTEGER REFERENCES users(id),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS babies (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cert TEXT UNIQUE NOT NULL,
+        owner_id INTEGER NOT NULL REFERENCES users(id),
+        name TEXT NOT NULL,
+        tribe TEXT NOT NULL,
+        hoodie_pattern TEXT NOT NULL,
+        stones TEXT NOT NULL,
+        face TEXT NOT NULL,
+        for_trade INTEGER NOT NULL DEFAULT 0,
+        is_custom INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS offers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        from_user INTEGER NOT NULL REFERENCES users(id),
+        to_user INTEGER NOT NULL REFERENCES users(id),
+        offered_baby INTEGER REFERENCES babies(id),
+        offered_points INTEGER NOT NULL DEFAULT 0,
+        wanted_baby INTEGER NOT NULL REFERENCES babies(id),
+        status TEXT NOT NULL DEFAULT 'pending',
+        counter_of INTEGER REFERENCES offers(id),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS sessions (
+        token TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS pending_signups (
+        token TEXT PRIMARY KEY,
+        username TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        salt TEXT NOT NULL,
+        tribe TEXT NOT NULL,
+        invite_code TEXT,
+        invited_by INTEGER REFERENCES users(id),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS notices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        text TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS purchases (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        item_type TEXT NOT NULL,
+        item_ref TEXT NOT NULL,
+        amount TEXT NOT NULL,
+        paypal_order_id TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS shop_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cert TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        tribe TEXT NOT NULL,
+        hoodie_pattern TEXT NOT NULL,
+        stones TEXT NOT NULL,
+        face TEXT NOT NULL,
+        price TEXT NOT NULL DEFAULT '1.99',
+        sold INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS leaders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cert TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        tribe TEXT NOT NULL,
+        hoodie_pattern TEXT NOT NULL,
+        stones TEXT NOT NULL,
+        face TEXT NOT NULL,
+        price TEXT NOT NULL DEFAULT '10.00',
+        sold INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS gods (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cert TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        price TEXT NOT NULL DEFAULT '40.00',
+        sold INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
+    # Migration for databases created before Stripe: purchases gain a
+    # stripe_session_id column (PayPal purchases keep paypal_order_id).
+    cols = [r[1] for r in
+            con.execute("PRAGMA table_info(purchases)").fetchall()]
+    if "stripe_session_id" not in cols:
+        con.execute("ALTER TABLE purchases ADD COLUMN stripe_session_id"
+                    " TEXT")
+    # Notices board: seeded once with the current characters and where
+    # they were found; new additions append below.
+    if con.execute("SELECT COUNT(*) FROM notices").fetchone()[0] == 0:
+        for text in (
+            "The First Beginnings collection is live — the first hoodie "
+            "babies have arrived.",
+            "Damiana June, leader of the Blues, is available — found in "
+            "the sea.",
+            "Aaliyah Bee, leader of the Browns, is available — found in "
+            "the woods.",
+            "Jazmyn, leader of the Reds, is available — found in the sky.",
+            "The Blues have arrived — Marina, Coral, Pearl, Tide, and Kai, "
+            "found by the sea.",
+        ):
+            con.execute("INSERT INTO notices (text) VALUES (?)", (text,))
+    # System account that owns the weekly Black sale listing.
+    if not con.execute("SELECT 1 FROM users WHERE username='underground'"
+                       ).fetchone():
+        salt = secrets.token_hex(16)
+        con.execute(
+            "INSERT INTO users (username, password_hash, salt, invite_code)"
+            " VALUES (?,?,?,?)",
+            ("underground", hash_password(secrets.token_hex(32), salt),
+             salt, new_invite_code(con)))
+    # Shop stock: individual characters for sale at $1.99, seeded once.
+    if con.execute("SELECT COUNT(*) FROM shop_items").fetchone()[0] == 0:
+        for i, (name, tribe) in enumerate(SHOP_INDIVIDUALS):
+            pool = STARTERS[tribe]
+            con.execute(
+                "INSERT INTO shop_items (cert, name, tribe, hoodie_pattern,"
+                " stones, face, price) VALUES (?,?,?,?,?,?,?)",
+                ("EHB-S%03d" % (i + 1), name, tribe,
+                 pool["patterns"][i % len(pool["patterns"])],
+                 pool["stones"], pool["face"], PRICE_INDIVIDUAL))
+    # Leaders: the 3 unique founders, seeded once.
+    if con.execute("SELECT COUNT(*) FROM leaders").fetchone()[0] == 0:
+        for ld in LEADERS:
+            con.execute(
+                "INSERT INTO leaders (cert, name, tribe, hoodie_pattern,"
+                " stones, face, price) VALUES (?,?,?,?,?,?,?)",
+                (ld["cert"], ld["name"], ld["tribe"], ld["pattern"],
+                 ld["stones"], ld["face"], PRICE_LEADER))
+    # Gods: exactly 3, seeded once with Doneil's names.
+    if con.execute("SELECT COUNT(*) FROM gods").fetchone()[0] == 0:
+        for g in GODS:
+            con.execute(
+                "INSERT INTO gods (cert, name, price) VALUES (?,?,?)",
+                (g["cert"], g["name"], PRICE_GOD))
+    # Migration for databases seeded before the gods were named: rename
+    # the generic slots to Doneil's names, matched by certificate.
+    for g in GODS:
+        con.execute("UPDATE gods SET name=? WHERE cert=?",
+                    (g["name"], g["cert"]))
+    con.commit()
+    con.close()
+
+
+def hash_password(password, salt):
+    return hashlib.pbkdf2_hmac("sha256", password.encode(),
+                               salt.encode(), 200_000).hex()
+
+
+def new_invite_code(con):
+    alphabet = string.ascii_uppercase + string.digits
+    while True:
+        code = "".join(secrets.choice(alphabet) for _ in range(8))
+        if not con.execute("SELECT 1 FROM users WHERE invite_code=?",
+                           (code,)).fetchone():
+            return code
+
+
+def mint_baby(con, owner_id, tribe=None, name=None, pattern=None,
+              stones=None, face=None, is_custom=0):
+    """Create one unique baby (1-of-1 certificate) for an owner."""
+    if tribe is None:
+        tribe = random.choice(list(STARTERS))
+    pool = STARTERS[tribe]
+    name = name or random.choice(pool["names"])
+    pattern = pattern or random.choice(pool["patterns"])
+    stones = stones or pool["stones"]
+    face = face or pool["face"]
+    prefix = pool["prefix"] if tribe in STARTERS else "C"
+    n = con.execute("SELECT COUNT(*) FROM babies WHERE tribe=?",
+                    (tribe,)).fetchone()[0] + 1
+    while True:
+        cert = "EHB-%s%03d" % (prefix, n)
+        if not con.execute("SELECT 1 FROM babies WHERE cert=?",
+                           (cert,)).fetchone():
+            break
+        n += 1
+    con.execute(
+        "INSERT INTO babies (cert, owner_id, name, tribe, hoodie_pattern,"
+        " stones, face, is_custom) VALUES (?,?,?,?,?,?,?,?)",
+        (cert, owner_id, name, tribe, pattern, stones, face, is_custom))
+    return cert
+
+
+def creator_slots_available(user):
+    return user["points_earned"] // 300 - user["creator_slots_used"]
+
+
+def trade_cap(con, user_id):
+    """Max pending outgoing offers at once: regular 1, leader owner 2,
+    god owner 5 (highest applicable wins). Perks follow current
+    ownership — trade away your leader or god and the cap drops."""
+    certs = {r["cert"] for r in con.execute(
+        "SELECT cert FROM babies WHERE owner_id=?",
+        (user_id,)).fetchall()}
+    god_certs = {r["cert"] for r in con.execute(
+        "SELECT cert FROM gods").fetchall()}
+    if certs & god_certs:
+        return 5
+    leader_certs = {r["cert"] for r in con.execute(
+        "SELECT cert FROM leaders").fetchall()}
+    if certs & leader_certs:
+        return 2
+    return 1
+
+
+def cap_error(cap, pending):
+    """Message shown when an offer would exceed the trade cap."""
+    return ("You can have at most %d pending offer(s) at once — regular "
+            "traders 1, leader owners 2, god owners 5. You already have "
+            "%d pending, so wait for one to resolve before sending "
+            "another." % (cap, pending))
+
+
+def grant_purchase(con, pur, user_id):
+    """Grant a verified purchase. Returns (ok, kind, name, cert, points).
+
+    kind is one of 'individual', 'leader', 'god', 'points'. Callers must
+    have verified the payment already and checked the purchase is still
+    pending; this function only checks the item is still available and
+    performs the grant. It does not commit — the caller does that after
+    marking the purchase completed.
+    """
+    item_type, ref = pur["item_type"], pur["item_ref"]
+    if item_type == "individual":
+        item = con.execute(
+            "SELECT * FROM shop_items WHERE cert=? AND sold=0",
+            (ref,)).fetchone()
+        if not item:
+            return (False, "individual", "", "",
+                    "That character was already sold — nothing was "
+                    "granted.")
+        con.execute(
+            "INSERT INTO babies (cert, owner_id, name, tribe,"
+            " hoodie_pattern, stones, face) VALUES (?,?,?,?,?,?,?)",
+            (item["cert"], user_id, item["name"], item["tribe"],
+             item["hoodie_pattern"], item["stones"], item["face"]))
+        con.execute("UPDATE shop_items SET sold=1 WHERE id=?",
+                    (item["id"],))
+        return (True, "individual", item["name"], item["cert"], 0)
+    if item_type == "leader":
+        ld = con.execute(
+            "SELECT * FROM leaders WHERE cert=? AND sold=0",
+            (ref,)).fetchone()
+        if not ld:
+            return (False, "leader", "", "",
+                    "That leader was already sold — nothing was granted.")
+        con.execute(
+            "INSERT INTO babies (cert, owner_id, name, tribe,"
+            " hoodie_pattern, stones, face) VALUES (?,?,?,?,?,?,?)",
+            (ld["cert"], user_id, ld["name"], ld["tribe"],
+             ld["hoodie_pattern"], ld["stones"], ld["face"]))
+        con.execute("UPDATE leaders SET sold=1 WHERE id=?", (ld["id"],))
+        add_notice(con, "Leader %s was purchased — now in a new "
+                   "collection." % ld["name"])
+        return (True, "leader", ld["name"], ld["cert"], 0)
+    if item_type == "god":
+        g = con.execute(
+            "SELECT * FROM gods WHERE cert=? AND sold=0",
+            (ref,)).fetchone()
+        if not g:
+            return (False, "god", "", "",
+                    "That god was already taken — nothing was granted.")
+        con.execute(
+            "INSERT INTO babies (cert, owner_id, name, tribe,"
+            " hoodie_pattern, stones, face) VALUES (?,?,?,?,?,?,?)",
+            (g["cert"], user_id, g["name"], "Gods", "God hoodie",
+             "god rhinestones", "god-like"))
+        con.execute("UPDATE gods SET sold=1 WHERE id=?", (g["id"],))
+        add_notice(con, "A god was purchased — one of only 3 gods, now "
+                   "in a new collection.")
+        return (True, "god", g["name"], g["cert"], 0)
+    if item_type == "points":
+        try:
+            n = int(ref.split("-", 1)[1])
+        except (IndexError, ValueError):
+            n = 0
+        if n not in POINTS_PACK_PRICES:
+            return (False, "points", "", "",
+                    "That points pack is not for sale — nothing was "
+                    "granted.")
+        # Balance only: bought points never count toward the
+        # character-creator unlock (trade-earned only).
+        con.execute("UPDATE users SET points=points+? WHERE id=?",
+                    (n, user_id))
+        return (True, "points", "", "", n)
+    return (False, item_type, "", "",
+            "Unknown purchase type — nothing was granted.")
+
+
+def add_notice(con, text):
+    con.execute("INSERT INTO notices (text) VALUES (?)", (text,))
+
+
+def weekly_black_cert():
+    import datetime
+    today = datetime.date.today()
+    iso_year, iso_week, _ = today.isocalendar()
+    return "EHB-BLK-%d-W%02d" % (iso_year, iso_week), iso_week
+
+
+def ensure_weekly_black(con):
+    """One Black pops up for sale each week; only the current one is listed.
+
+    The weekly Black belongs to the system 'underground' account and is
+    listed on the Trade Board. Older weekly Blacks stop being listed.
+    """
+    cert, week = weekly_black_cert()
+    shop = con.execute(
+        "SELECT id FROM users WHERE username='underground'").fetchone()
+    if not shop:
+        return
+    shop_id = shop["id"]
+    con.execute("UPDATE babies SET for_trade=0 WHERE tribe='Blacks' "
+                "AND owner_id=? AND cert != ?", (shop_id, cert))
+    if not con.execute("SELECT 1 FROM babies WHERE cert=?",
+                       (cert,)).fetchone():
+        pick = BLACKS_ROSTER[week % len(BLACKS_ROSTER)]
+        con.execute(
+            "INSERT INTO babies (cert, owner_id, name, tribe, hoodie_pattern,"
+            " stones, face, for_trade) VALUES (?,?,?,?,?,?,?,1)",
+            (cert, shop_id, pick["name"], "Blacks", pick["pattern"],
+             BLACK_STONES, BLACK_FACE))
+        add_notice(con, "A Black has popped up for sale — found underground.")
+    else:
+        # Only re-list while the Underground still owns it: once a Black
+        # is caught, it must stay off the board.
+        con.execute("UPDATE babies SET for_trade=1 WHERE cert=? "
+                    "AND owner_id=?", (cert, shop_id))
+    con.commit()
+
+# ---------------------------------------------------------------- html helpers
+def esc(s):
+    return html.escape(str(s))
+
+
+def page(title, body, user=None):
+    nav = ""
+    if user:
+        nav = ("<nav><a href='/me'>My Collection</a> | "
+               "<a href='/browse'>Trade Board</a> | "
+               "<a href='/offers'>Offers</a> | "
+               "<a href='/shop'>Shop</a> | "
+               "<a href='/purchases'>Purchases</a> | "
+               "<a href='/world'>World</a> | "
+               "<a href='/notices'>Notices</a> | "
+               "<a href='/logout'>Log out (%s)</a></nav>" % esc(user["username"]))
+    else:
+        nav = ("<nav><a href='/'>Home</a> | <a href='/login'>Log in</a> | "
+               "<a href='/signup'>Sign up</a> | "
+               "<a href='/shop'>Shop</a> | "
+               "<a href='/world'>World</a> | "
+               "<a href='/notices'>Notices</a></nav>")
+    return ("<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>%s</title><style>"
+            "body{font-family:system-ui,sans-serif;max-width:640px;margin:0 auto;"
+            "padding:16px;line-height:1.5} nav{margin-bottom:16px}"
+            "input,select,button{font-size:16px;padding:8px;margin:4px 0}"
+            ".card{border:1px solid #ccc;border-radius:10px;padding:12px;"
+            "margin:10px 0} .tag{display:inline-block;background:#eef;"
+            "border-radius:6px;padding:2px 8px;margin-right:6px}"
+            ".ok{color:green} .err{color:red}"
+            "</style></head><body>%s<h1>%s</h1>%s</body></html>"
+            % (esc(title), nav, esc(title), body))
+
+
+def baby_card(b, owner_name=None, show_owner=False):
+    out = "<div class='card'><b>%s</b> <span class='tag'>%s</span> " \
+          "<span class='tag'>%s</span><br>" % (
+              esc(b["name"]), esc(b["cert"]), esc(b["tribe"]))
+    out += "Hoodie: %s<br>Rhinestones: %s<br>Face: %s<br>" % (
+        esc(b["hoodie_pattern"]), esc(b["stones"]), esc(b["face"]))
+    if b["tribe"] == "Blacks":
+        out += "Eyes: Diamond<br>"
+    if b["is_custom"]:
+        out += "<span class='tag'>custom character</span> "
+    if b["for_trade"]:
+        out += "<span class='tag'>for trade</span> "
+    if show_owner and owner_name:
+        out += "<br>Owner: %s" % esc(owner_name)
+    return out + "</div>"
+
+# ---------------------------------------------------------------- handler
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *a):  # keep test output clean
+        pass
+
+    # -- plumbing --
+    def _cookies(self):
+        out = {}
+        for part in self.headers.get("Cookie", "").split(";"):
+            part = part.strip()
+            if "=" in part:
+                k, v = part.split("=", 1)
+                out[k.strip()] = v.strip()
+        return out
+
+    def _cookie_flags(self):
+        flags = "; HttpOnly; Path=/; SameSite=Lax"
+        if COOKIE_SECURE:
+            flags += "; Secure"
+        return flags
+
+    def _ensure_csrf(self):
+        """Double-submit CSRF token: one random token per browser, kept
+        in a cookie and echoed into every POST form. The token is new
+        for a first-time visitor (so _send_csrf_cookie issues it) and
+        stable afterwards."""
+        cookies = self._cookies()
+        token = cookies.get("csrf_token")
+        self._csrf_new = False
+        if not token:
+            token = secrets.token_hex(32)
+            self._csrf_new = True
+        self._csrf_token = token
+        return token
+
+    def _send_csrf_cookie(self):
+        if getattr(self, "_csrf_new", False):
+            self.send_header(
+                "Set-Cookie",
+                "csrf_token=%s%s" % (self._csrf_token,
+                                     self._cookie_flags()))
+
+    def send_html(self, body, status=200):
+        # Inject the CSRF token into every POST form in one place, so
+        # no form can forget it.
+        token = getattr(self, "_csrf_token", None)
+        if token:
+            body = re.sub(
+                r"(<form[^>]*method=['\"]post['\"][^>]*>)",
+                r"\1<input type='hidden' name='csrf_token' value='%s'>"
+                % token, body)
+        data = body.encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self._send_csrf_cookie()
+        self.end_headers()
+        self.wfile.write(data)
+
+    def redirect(self, path):
+        self.send_response(302)
+        self.send_header("Location", path)
+        self._send_csrf_cookie()
+        self.end_headers()
+
+    def set_session(self, token):
+        self.send_response(302)
+        self.send_header("Location", "/me")
+        self.send_header("Set-Cookie",
+                         "session=%s%s" % (token, self._cookie_flags()))
+        self._send_csrf_cookie()
+        self.end_headers()
+
+    def current_user(self, con):
+        cookies = self._cookies()
+        token = cookies.get("session")
+        if not token:
+            return None
+        row = con.execute(
+            "SELECT * FROM sessions WHERE token=?",
+            (token,)).fetchone()
+        if not row:
+            return None
+        # Sessions expire: a session older than SESSION_MAX_AGE_DAYS
+        # (default 7 days) is deleted and no longer logs anyone in.
+        try:
+            created = datetime.datetime.strptime(
+                row["created_at"], "%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            created = None
+        if created is not None:
+            age = datetime.datetime.utcnow() - created
+            if age.days >= SESSION_MAX_AGE_DAYS:
+                con.execute("DELETE FROM sessions WHERE token=?",
+                            (token,))
+                con.commit()
+                return None
+        return con.execute("SELECT * FROM users WHERE id=?",
+                           (row["user_id"],)).fetchone()
+
+    def form(self):
+        # Parsed once per POST request (do_POST parses first so it can
+        # check the CSRF token); actions reuse the cached dict.
+        if hasattr(self, "_form"):
+            return self._form
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        raw = self.rfile.read(length).decode()
+        parsed = urllib.parse.parse_qs(raw)
+        self._form = {k: v[0] for k, v in parsed.items()}
+        return self._form
+
+    # -- routing --
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path, query = parsed.path, urllib.parse.parse_qs(parsed.query)
+        con = db()
+        try:
+            self._ensure_csrf()
+            user = self.current_user(con)
+            if path == "/":
+                self.home(user)
+            elif path == "/signup":
+                self.signup_form(query)
+            elif path == "/login":
+                self.login_form()
+            elif path == "/logout":
+                self.do_logout(con)
+            elif path == "/me":
+                self.me(con, user, query)
+            elif path == "/browse":
+                self.browse(con, user)
+            elif path == "/offers":
+                self.offers(con, user)
+            elif path == "/world":
+                self.world(con, user)
+            elif path == "/notices":
+                self.notices(con, user)
+            elif path == "/shop":
+                self.shop(con, user)
+            elif path == "/purchases":
+                self.purchases_page(con, user)
+            elif path == "/buy_return":
+                self.buy_return(con, user, query)
+            elif path == "/buy_cancel":
+                self.buy_cancel(con, user, query)
+            elif path == "/stripe_return":
+                self.stripe_return(con, user, query)
+            elif path == "/stripe_cancel":
+                self.stripe_cancel(con, user, query)
+            elif path == "/create":
+                self.create_form(con, user)
+            else:
+                self.send_html(page("Not found", "<p>Unknown page.</p>",
+                                    user), 404)
+        finally:
+            con.close()
+
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        con = db()
+        try:
+            self._ensure_csrf()
+            self._form = self.form()
+            # CSRF check: the submitted token must match the cookie
+            # token. A missing or wrong token is rejected before any
+            # action runs, so a forged cross-site POST can do nothing.
+            cookie_token = self._cookies().get("csrf_token")
+            if not cookie_token or \
+                    self._form.get("csrf_token") != cookie_token:
+                self.send_html(page(
+                    "Forbidden",
+                    "<p class='err'>Security check failed — please reload "
+                    "the page and try again.</p>", None), 403)
+                return
+            user = self.current_user(con)
+            if path == "/signup":
+                self.do_signup(con)
+            elif path == "/signup_step2":
+                self.do_signup_step2(con)
+            elif path == "/login":
+                self.do_login(con)
+            elif path == "/toggle_trade":
+                self.do_toggle(con, user)
+            elif path == "/buy":
+                self.do_buy(con, user)
+            elif path == "/buy_stripe":
+                self.do_buy_stripe(con, user)
+            elif path == "/buy_leader":
+                self.do_buy_leader(con, user)
+            elif path == "/buy_leader_stripe":
+                self.do_buy_leader_stripe(con, user)
+            elif path == "/buy_god":
+                self.do_buy_god(con, user)
+            elif path == "/buy_god_stripe":
+                self.do_buy_god_stripe(con, user)
+            elif path == "/buy_points":
+                self.do_buy_points(con, user)
+            elif path == "/buy_points_stripe":
+                self.do_buy_points_stripe(con, user)
+            elif path == "/offer":
+                self.do_offer(con, user)
+            elif path == "/offer_action":
+                self.do_offer_action(con, user)
+            elif path == "/create_character":
+                self.do_create(con, user)
+            else:
+                self.send_html(page("Not found", "<p>Unknown action.</p>",
+                                    user), 404)
+        finally:
+            con.close()
+
+    def need_login(self, user):
+        if not user:
+            self.redirect("/login")
+            return True
+        return False
+
+    # -- pages --
+    def home(self, user):
+        body = """<p>Welcome to <b>Escamo Hoodie Babies Trade</b> — a trading
+        platform for small 3-inch hoodie babies. Every hoodie is 1-of-1:
+        no two are the same, and that's what makes the trade better.</p>
+        <p>Join and you get <b>one free hoodie baby</b> and
+        <b>300 points</b>. You pick the tribe you join (Blues, Browns,
+        or Reds), then choose your free character from that tribe and
+        name it yourself. Every completed trade is worth 20 points, and
+        every 300 points earned unlocks adding your own character.</p>"""
+        if user:
+            body += "<p><a href='/me'>Go to my collection</a></p>"
+        else:
+            body += ("<p><a href='/signup'>Sign up</a> or "
+                     "<a href='/login'>log in</a> to start trading.</p>")
+        body += ("<p>Prices: leaders $%s (buy in the "
+                 "<a href='/shop'>Shop</a> — choose 1 of the 3 leaders, "
+                 "each unique), individual characters $%s, gods $%s "
+                 "(only %d gods, and their trades are almost impossible). "
+                 "Everyone is free to purchase a leader. Points packs: "
+                 "300 for $1.99, 600 for $3.99, 900 for $9.99, 1,200 for "
+                 "$20.00 — also in the Shop. Checkout runs in test mode "
+                 "with PayPal or Cash App Pay — no real money moves.</p>"
+                 "<p>Trade slots: at most 1 pending offer at once for a "
+                 "regular trader, 2 for a leader owner, 5 for a god "
+                 "owner. Perks follow current ownership.</p>"
+                 "<p>Collections: <b>First Beginnings</b> (current). Summer, "
+                 "Fall, and Winter collections are coming.</p>"
+                 "<p><a href='/notices'>Notices</a> — see what's new and "
+                 "where it was found.</p>" % (
+                     PRICE_LEADER, PRICE_INDIVIDUAL, PRICE_GOD, GOD_COUNT))
+        self.send_html(page("Escamo Hoodie Babies Trade", body, user))
+
+    def world(self, con, user):
+        ensure_weekly_black(con)
+        body = """
+        <div class='card'><b>Blues — rulers over water</b><br>
+        Led by <b>Damiana June</b>, Controller of Water. Blue slanted eyes,
+        fish-like face with a surprised crying look. The rare one of her
+        tribe — purchasable when the platform goes live. The Blues run the
+        sea and have only five characters, not including her: Marina,
+        Coral, Pearl, Tide, and Kai. Blues carry sea and ocean names, and
+        their faces are fish-like.</div>
+        <div class='card'><b>Browns — rulers of the forest</b><br>
+        Led by <b>Aaliyah Bee</b>, ruler of the woods, keeper of the woods
+        and animals, with a red stone in the middle of her forehead.
+        Browns have a more animal-like face, and Aaliyah Bee's is
+        animal-looking and grouchy.</div>
+        <div class='card'><b>Reds — rulers of the sky</b><br>
+        Led by <b>Jazmyn</b>, ruler of the sky. Although she leads the
+        Reds, she is more powerful than the other controllers. Glowing
+        diamond head, black eyes, all-black hoodie with stones of every
+        different color, hoodie over her face, wand with a fire-red tip.
+        Reds have more angel-like faces, and Jazmyn's is angel-looking
+        with a slight curious smile. Jazmyn is the elder of them all, the
+        first hoodie baby to arrive.</div>
+        <div class='card'><b>Blacks — the Miners</b><br>
+        The Blacks ARE the Miners. There is no ruler: they are scavengers,
+        underground-raised, and they just pop up out of anywhere. They mean
+        no harm, but they are out to get what they can to go back
+        underground — they are the protectors, so catch them as they pop
+        up. All Blacks carry Diamond eyes and all-white hoodies with black
+        stones, and their faces are angry creature-like. Once a week, one
+        Black pops up for sale on the Trade Board. Trading for a Black
+        starts at 1,200 points, and the Underground auto-accepts the
+        first qualifying offer.</div>
+        <div class='card'><b>The 3 Gods — over everyone</b><br>
+        There are only 3 gods, and they are over everyone. Purchase:
+        $40.00 each — buy one in the <a href='/shop'>Shop</a> with
+        PayPal or Cash App Pay (test mode, no real money moves).
+        Their trades are almost impossible — but don't get discouraged:
+        more gods will arrive over new tribes.</div>
+        <div class='card'><b>Prices</b><br>
+        Leaders: $10.00 to purchase, and everyone is free to purchase a
+        leader — buy one in the <a href='/shop'>Shop</a>, choosing 1 of
+        the 3 leaders (Damiana June, Aaliyah Bee, Jazmyn); each leader
+        is unique, so once one is sold it is gone. Individual
+        characters: $1.99 to purchase — buy one in the
+        <a href='/shop'>Shop</a> with PayPal or Cash App Pay (test
+        mode, no real money moves). Gods: $40.00 to purchase — buy one
+        of the 3 god slots in the <a href='/shop'>Shop</a>.</div>
+        <div class='card'><b>Trade slots</b><br>
+        A regular trader can have at most 1 pending offer at once.
+        Owning a leader raises that to 2 trades at once; owning a god
+        raises it to 5 trades at once. The perk follows current
+        ownership — trade away your leader or god and the cap drops
+        back.</div>
+        <div class='card'><b>Collections</b><br>
+        The current babies are the First Beginnings. Summer, Fall, and
+        Winter collections are coming. As characters are added, everyone
+        gets a notice that they are available and where they were found —
+        see the <a href='/notices'>Notices</a> board.</div>
+        <p>These leaders are the founders of a new world.</p>"""
+        self.send_html(page("The World of Escamo", body, user))
+
+    def notices(self, con, user):
+        rows = con.execute(
+            "SELECT * FROM notices ORDER BY id DESC").fetchall()
+        body = ("<p>Whenever a character is added, everyone gets a notice "
+                "that it is available and where it was found.</p>")
+        for n in rows:
+            body += "<div class='card'>%s</div>" % esc(n["text"])
+        self.send_html(page("Notices", body, user))
+
+    def signup_form(self, query, msg=""):
+        invite = esc(query.get("invite", [""])[0])
+        body = msg + """<form method='post' action='/signup'>
+        Username: <input name='username' required><br>
+        Password: <input type='password' name='password' required><br>
+        Pick your tribe:<br>
+        <label><input type='radio' name='tribe' value='Blues' required>
+        Blues — rulers over water</label><br>
+        <label><input type='radio' name='tribe' value='Browns' required>
+        Browns — rulers of the forest</label><br>
+        <label><input type='radio' name='tribe' value='Reds' required>
+        Reds — rulers of the sky</label><br>
+        Invite code (optional): <input name='invite_code' value='%s'><br>
+        <button>Continue</button></form>
+        <p>Every new account gets one free hoodie baby and 300 points.
+        On the next step you choose your free character from your
+        tribe and name it yourself. Blacks are not a starter tribe —
+        they are the rare Miners, found through the weekly sale.</p>
+        """ % invite
+        self.send_html(page("Sign up", body))
+
+    def signup_step2_form(self, pending):
+        """Step 2 of signup: pick one starter character from the chosen
+        tribe's roster and name it. The name field starts prefilled
+        with the roster name and can be overwritten; leaving it blank
+        keeps the roster name."""
+        tribe = pending["tribe"]
+        names = STARTERS[tribe]["names"]
+        opts = "".join("<option value='%s'>%s</option>"
+                       % (esc(n), esc(n)) for n in names)
+        body = """<p>You joined the <b>%s</b>. Now choose your free
+        hoodie baby and name it.</p>
+        <form method='post' action='/signup_step2'>
+        <input type='hidden' name='signup_token' value='%s'>
+        Character: <select name='roster_name' id='roster'>%s</select><br>
+        Name: <input name='baby_name' id='baby_name'
+        value='%s' maxlength='40'><br>
+        <button>Create my account</button></form>
+        <script>document.getElementById('roster').addEventListener(
+        'change', function () { document.getElementById('baby_name')
+        .value = this.value; });</script>
+        <p>Your free baby comes with your tribe's hoodie pattern,
+        rhinestones, and face — and your account starts with
+        300 points.</p>
+        """ % (esc(tribe), esc(pending["token"]), opts, esc(names[0]))
+        self.send_html(page("Choose your hoodie baby", body))
+
+    def login_form(self, msg=""):
+        body = msg + """<form method='post' action='/login'>
+        Username: <input name='username' required><br>
+        Password: <input type='password' name='password' required><br>
+        <button>Log in</button></form>"""
+        self.send_html(page("Log in", body))
+
+    def do_logout(self, con):
+        cookie = self.headers.get("Cookie", "")
+        for part in cookie.split(";"):
+            part = part.strip()
+            if part.startswith("session="):
+                con.execute("DELETE FROM sessions WHERE token=?",
+                            (part[len("session="):],))
+                con.commit()
+        self.send_response(302)
+        self.send_header("Location", "/")
+        self.send_header("Set-Cookie",
+                         "session=%s; Max-Age=0" % self._cookie_flags())
+        self._send_csrf_cookie()
+        self.end_headers()
+
+    # -- auth actions --
+    # Signup is two steps. Step 1 collects username, password, tribe,
+    # and invite code and stores them as a pending signup — no account
+    # exists yet. Step 2 picks the free character and its name, and
+    # only then is the account created. Abandoning step 2 creates
+    # nothing; pending signups expire after 30 minutes.
+    PENDING_SIGNUP_TTL = "30 minutes"
+
+    def do_signup(self, con):
+        f = self.form()
+        key = "signup:" + self.client_address[0]
+        if rate_blocked(key):
+            self.send_html(page(
+                "Too many attempts",
+                "<p class='err'>Too many signup attempts from this "
+                "address — please wait a few minutes and try again.</p>"),
+                429)
+            return
+        username = (f.get("username") or "").strip()
+        password = f.get("password") or ""
+        tribe = (f.get("tribe") or "").strip()
+        invite = (f.get("invite_code") or "").strip()
+        if not username or not password:
+            rate_record_fail(key)
+            self.signup_form(
+                {}, "<p class='err'>Username and password are "
+                "required.</p>")
+            return
+        if tribe not in STARTERS:
+            # STARTERS holds exactly the joinable tribes (Blues, Browns,
+            # Reds). Blacks are the rare Miners and are not joinable.
+            rate_record_fail(key)
+            self.signup_form(
+                {}, "<p class='err'>Please pick a tribe to join: Blues, "
+                "Browns, or Reds.</p>")
+            return
+        if con.execute("SELECT 1 FROM users WHERE username=?",
+                       (username,)).fetchone():
+            rate_record_fail(key)
+            self.signup_form(
+                {}, "<p class='err'>That username is taken.</p>")
+            return
+        invited_by = None
+        if invite:
+            row = con.execute("SELECT id FROM users WHERE invite_code=?",
+                              (invite,)).fetchone()
+            if row:
+                invited_by = row["id"]
+        salt = secrets.token_hex(16)
+        token = secrets.token_hex(32)
+        con.execute(
+            "INSERT INTO pending_signups (token, username, password_hash,"
+            " salt, tribe, invite_code, invited_by) VALUES (?,?,?,?,?,?,?)",
+            (token, username, hash_password(password, salt), salt, tribe,
+             invite or None, invited_by))
+        con.commit()
+        pending = con.execute(
+            "SELECT * FROM pending_signups WHERE token=?",
+            (token,)).fetchone()
+        self.signup_step2_form(pending)
+
+    def do_signup_step2(self, con):
+        f = self.form()
+        key = "signup:" + self.client_address[0]
+        if rate_blocked(key):
+            self.send_html(page(
+                "Too many attempts",
+                "<p class='err'>Too many signup attempts from this "
+                "address — please wait a few minutes and try again.</p>"),
+                429)
+            return
+        # Drop expired pending signups first (30 minutes, UTC).
+        con.execute("DELETE FROM pending_signups WHERE created_at < "
+                    "datetime('now', '-" + self.PENDING_SIGNUP_TTL + "')")
+        con.commit()
+        token = f.get("signup_token") or ""
+        pending = con.execute(
+            "SELECT * FROM pending_signups WHERE token=?",
+            (token,)).fetchone()
+        if not pending:
+            rate_record_fail(key)
+            self.send_html(page(
+                "Sign up",
+                "<p class='err'>This signup step expired or is invalid — "
+                "please <a href='/signup'>sign up again</a>.</p>"))
+            return
+        tribe = pending["tribe"]
+        roster_name = (f.get("roster_name") or "").strip()
+        if roster_name not in STARTERS[tribe]["names"]:
+            rate_record_fail(key)
+            self.send_html(page(
+                "Sign up",
+                "<p class='err'>Please pick one of your tribe's starter "
+                "characters.</p>"))
+            return
+        # Blank keeps the roster name; anything else is the user's own
+        # name for their free baby, capped at 40 characters.
+        baby_name = (f.get("baby_name") or "").strip()[:40] or roster_name
+        username = pending["username"]
+        if con.execute("SELECT 1 FROM users WHERE username=?",
+                       (username,)).fetchone():
+            rate_record_fail(key)
+            con.execute("DELETE FROM pending_signups WHERE token=?",
+                        (token,))
+            con.commit()
+            self.signup_form(
+                {}, "<p class='err'>That username is taken.</p>")
+            return
+        code = new_invite_code(con)
+        cur = con.execute(
+            "INSERT INTO users (username, password_hash, salt, invite_code,"
+            " invited_by) VALUES (?,?,?,?,?)",
+            (username, pending["password_hash"], pending["salt"], code,
+             pending["invited_by"]))
+        user_id = cur.lastrowid
+        # The free baby is the chosen character with the chosen name,
+        # using the tribe's default pattern, rhinestones, and face.
+        mint_baby(con, user_id, tribe=tribe, name=baby_name)
+        con.execute("DELETE FROM pending_signups WHERE token=?",
+                    (token,))
+        con.commit()
+        token = secrets.token_hex(32)
+        con.execute("INSERT INTO sessions (token, user_id) VALUES (?,?)",
+                    (token, user_id))
+        con.commit()
+        rate_clear(key)
+        self.set_session(token)
+
+    def do_login(self, con):
+        f = self.form()
+        key = "login:" + self.client_address[0]
+        if rate_blocked(key):
+            self.send_html(page(
+                "Too many attempts",
+                "<p class='err'>Too many login attempts from this "
+                "address — please wait a few minutes and try again.</p>"),
+                429)
+            return
+        row = con.execute("SELECT * FROM users WHERE username=?",
+                          (f.get("username", ""),)).fetchone()
+        if not row or row["password_hash"] != hash_password(
+                f.get("password", ""), row["salt"]):
+            rate_record_fail(key)
+            self.login_form("<p class='err'>Wrong username or password.</p>")
+            return
+        rate_clear(key)
+        token = secrets.token_hex(32)
+        con.execute("INSERT INTO sessions (token, user_id) VALUES (?,?)",
+                    (token, row["id"]))
+        con.commit()
+        self.set_session(token)
+
+    # -- collection / trade board --
+    def me(self, con, user, query):
+        if self.need_login(user):
+            return
+        user = con.execute("SELECT * FROM users WHERE id=?",
+                           (user["id"],)).fetchone()
+        babies = con.execute("SELECT * FROM babies WHERE owner_id=? "
+                             "ORDER BY id", (user["id"],)).fetchall()
+        slots = creator_slots_available(user)
+        body = ("<p>Points: <b>%d</b> | Points earned: <b>%d</b> | "
+                "Character creator: %s</p>" % (
+                    user["points"], user["points_earned"],
+                    ("<b>UNLOCKED — <a href='/create'>add your own "
+                     "character</a></b>" if slots >= 1
+                     else "%d / 300 points earned" % user["points_earned"])))
+        body += ("<p>Your invite code: <b>%s</b><br>Share this link so "
+                 "someone can join and trade with you:<br>"
+                 "<code>/signup?invite=%s</code></p>" % (
+                     esc(user["invite_code"]), esc(user["invite_code"])))
+        if query.get("msg"):
+            body += "<p class='ok'>%s</p>" % esc(query["msg"][0])
+        body += "<h2>My hoodie babies (%d)</h2>" % len(babies)
+        for b in babies:
+            body += baby_card(b)
+            body += ("<form method='post' action='/toggle_trade'>"
+                     "<input type='hidden' name='baby_id' value='%d'>"
+                     "<button>%s</button></form>"
+                     % (b["id"], "Remove from trade board"
+                        if b["for_trade"] else "Put up for trade"))
+        self.send_html(page("My Collection", body, user))
+
+    def do_toggle(self, con, user):
+        if self.need_login(user):
+            return
+        f = self.form()
+        b = con.execute("SELECT * FROM babies WHERE id=? AND owner_id=?",
+                        (f.get("baby_id"), user["id"])).fetchone()
+        if b:
+            con.execute("UPDATE babies SET for_trade=? WHERE id=?",
+                        (0 if b["for_trade"] else 1, b["id"]))
+            con.commit()
+        self.redirect("/me")
+
+    def browse(self, con, user):
+        if self.need_login(user):
+            return
+        ensure_weekly_black(con)
+        mine = con.execute("SELECT * FROM babies WHERE owner_id=?",
+                           (user["id"],)).fetchall()
+        rows = con.execute(
+            "SELECT babies.*, users.username AS owner FROM babies "
+            "JOIN users ON users.id = babies.owner_id "
+            "WHERE babies.for_trade=1 AND babies.owner_id != ? ORDER BY id",
+            (user["id"],)).fetchall()
+        cap = trade_cap(con, user["id"])
+        body = ("<p>Tap a baby to make an offer for it. Your trade "
+                "slots: at most <b>%d</b> pending offer(s) at once "
+                "(regular 1, leader owner 2, god owner 5).</p>" % cap)
+        if not rows:
+            body += "<p>No babies are up for trade right now.</p>"
+        for b in rows:
+            body += baby_card(b, b["owner"], show_owner=True)
+            if b["tribe"] == "Blacks":
+                body += ("<p><b>Trading for a Black starts at 1,200 "
+                         "points.</b> The Underground auto-accepts the "
+                         "first qualifying offer.</p>")
+            opts = "".join(
+                "<option value='%d'>%s (%s)</option>"
+                % (m["id"], esc(m["name"]), esc(m["cert"])) for m in mine)
+            body += ("""<form method='post' action='/offer'>
+            <input type='hidden' name='wanted_baby_id' value='%d'>
+            Your baby (optional): <select name='offered_baby_id'>
+            <option value=''>points only</option>%s</select><br>
+            Points to offer: <input type='number' name='offered_points'
+            value='0' min='0'><br><button>Send offer</button></form>"""
+                     % (b["id"], opts))
+        self.send_html(page("Trade Board", body, user))
+
+    def do_offer(self, con, user):
+        if self.need_login(user):
+            return
+        f = self.form()
+        wanted = con.execute(
+            "SELECT * FROM babies WHERE id=? AND for_trade=1 "
+            "AND owner_id != ?", (f.get("wanted_baby_id"), user["id"])).fetchone()
+        if not wanted:
+            self.send_html(page("Trade Board",
+                                 "<p class='err'>That baby is not up for "
+                                 "trade.</p>", user))
+            return
+        if wanted["tribe"] == "Blacks":
+            fresh = con.execute("SELECT points FROM users WHERE id=?",
+                                (user["id"],)).fetchone()
+            if fresh["points"] < BLACK_TRADE_MIN_POINTS:
+                self.send_html(page("Trade Board",
+                                     "<p class='err'>Trading for a Black "
+                                     "starts at 1,200 points — you have %d."
+                                     "</p>" % fresh["points"], user))
+                return
+        offered_baby = None
+        if f.get("offered_baby_id"):
+            offered_baby = con.execute(
+                "SELECT * FROM babies WHERE id=? AND owner_id=?",
+                (f.get("offered_baby_id"), user["id"])).fetchone()
+            if not offered_baby:
+                self.send_html(page("Trade Board",
+                                     "<p class='err'>That baby is not "
+                                     "yours.</p>", user))
+                return
+        try:
+            pts = int(f.get("offered_points") or 0)
+        except ValueError:
+            pts = 0
+        if pts < 0 or pts > user["points"]:
+            self.send_html(page("Trade Board",
+                                 "<p class='err'>You don't have that many "
+                                 "points.</p>", user))
+            return
+        # Trade slots: at most 1 pending outgoing offer for a regular
+        # trader, 2 for a leader owner, 5 for a god owner.
+        cap = trade_cap(con, user["id"])
+        pending = con.execute(
+            "SELECT COUNT(*) FROM offers WHERE from_user=? AND status="
+            "'pending'", (user["id"],)).fetchone()[0]
+        if pending >= cap:
+            self.send_html(page("Trade Board",
+                                 "<p class='err'>%s</p>"
+                                 % cap_error(cap, pending), user))
+            return
+        cur = con.execute(
+            "INSERT INTO offers (from_user, to_user, offered_baby,"
+            " offered_points, wanted_baby) VALUES (?,?,?,?,?)",
+            (user["id"], wanted["owner_id"],
+             offered_baby["id"] if offered_baby else None, pts, wanted["id"]))
+        offer_id = cur.lastrowid
+        con.commit()
+        # Weekly Black sale: the Underground auto-accepts the first
+        # qualifying offer, so the buyer gets the Black immediately.
+        # The offered baby (if any) and offered points go to the
+        # Underground, and the sale completes at once — with 60 points
+        # earned for the Black catch (not the usual 20).
+        underground = con.execute(
+            "SELECT id FROM users WHERE username='underground'").fetchone()
+        if wanted["tribe"] == "Blacks" and underground and \
+                wanted["owner_id"] == underground["id"]:
+            offer = con.execute("SELECT * FROM offers WHERE id=?",
+                                (offer_id,)).fetchone()
+            self.accept_offer(con, offer)
+            done = con.execute("SELECT * FROM offers WHERE id=?",
+                               (offer_id,)).fetchone()
+            if done["status"] == "accepted":
+                add_notice(con, "A Black was caught by %s — found "
+                           "underground." % user["username"])
+                con.commit()
+                self.redirect("/offers")
+            else:
+                # Lost the race: the Black was already caught.
+                con.execute("UPDATE offers SET status='withdrawn' "
+                            "WHERE id=?", (offer_id,))
+                con.commit()
+                self.send_html(page("Trade Board",
+                                     "<p class='err'>Too late — that Black "
+                                     "was already caught. A new Black pops "
+                                     "up next week.</p>", user))
+            return
+        self.redirect("/offers")
+
+    def offers(self, con, user):
+        if self.need_login(user):
+            return
+        mine = {b["id"]: b for b in
+                con.execute("SELECT * FROM babies").fetchall()}
+        users = {u["id"]: u["username"] for u in
+                 con.execute("SELECT id, username FROM users").fetchall()}
+
+        def offer_block(o, incoming):
+            ob = mine.get(o["offered_baby"]) if o["offered_baby"] else None
+            wb = mine.get(o["wanted_baby"])
+            text = ("<div class='card'>From <b>%s</b> to <b>%s</b> — "
+                    "offers %s + %d points for %s "
+                    "(status: %s)</div>" % (
+                        esc(users.get(o["from_user"], "?")),
+                        esc(users.get(o["to_user"], "?")),
+                        ("%s (%s)" % (esc(ob["name"]), esc(ob["cert"])))
+                        if ob else "no baby",
+                        o["offered_points"],
+                        ("%s (%s)" % (esc(wb["name"]), esc(wb["cert"])))
+                        if wb else "?",
+                        esc(o["status"])))
+            if o["status"] == "pending" and incoming:
+                text += ("""<form method='post' action='/offer_action'
+                style='display:inline'>
+                <input type='hidden' name='offer_id' value='%d'>
+                <input type='hidden' name='action' value='accept'>
+                <button>Accept</button></form>
+                <form method='post' action='/offer_action'
+                style='display:inline'>
+                <input type='hidden' name='offer_id' value='%d'>
+                <input type='hidden' name='action' value='decline'>
+                <button>Decline</button></form>""" % (o["id"], o["id"]))
+                if ob is None:
+                    # counter needs a baby coming back, so offer one of mine
+                    pass
+                else:
+                    text += ("""<form method='post' action='/offer_action'>
+                    <input type='hidden' name='offer_id' value='%d'>
+                    <input type='hidden' name='action' value='counter'>
+                    Counter with my baby:
+                    <select name='counter_baby_id'>%s</select>
+                    + points: <input type='number' name='counter_points'
+                    value='0' min='0'>
+                    <button>Send counter</button></form>""" % (
+                        o["id"], "".join(
+                            "<option value='%d'>%s (%s)</option>" % (
+                                m["id"], esc(m["name"]), esc(m["cert"]))
+                            for m in con.execute(
+                                "SELECT * FROM babies WHERE owner_id=?",
+                                (user["id"],)).fetchall())))
+            return text
+
+        incoming = con.execute(
+            "SELECT * FROM offers WHERE to_user=? ORDER BY id DESC",
+            (user["id"],)).fetchall()
+        outgoing = con.execute(
+            "SELECT * FROM offers WHERE from_user=? ORDER BY id DESC",
+            (user["id"],)).fetchall()
+        body = "<h2>Incoming offers</h2>"
+        body += "".join(offer_block(o, True) for o in incoming) or "<p>None.</p>"
+        body += "<h2>Outgoing offers</h2>"
+        body += "".join(offer_block(o, False) for o in outgoing) or "<p>None.</p>"
+        self.send_html(page("Offers", body, user))
+
+    def do_offer_action(self, con, user):
+        if self.need_login(user):
+            return
+        f = self.form()
+        o = con.execute("SELECT * FROM offers WHERE id=? AND to_user=? "
+                        "AND status='pending'",
+                        (f.get("offer_id"), user["id"])).fetchone()
+        if not o:
+            self.redirect("/offers")
+            return
+        action = f.get("action")
+        if action == "decline":
+            con.execute("UPDATE offers SET status='declined' WHERE id=?",
+                        (o["id"],))
+            con.commit()
+        elif action == "accept":
+            self.accept_offer(con, o)
+        elif action == "counter":
+            cb = con.execute("SELECT * FROM babies WHERE id=? AND owner_id=?",
+                             (f.get("counter_baby_id"), user["id"])).fetchone()
+            if cb and o["offered_baby"]:
+                try:
+                    cpts = int(f.get("counter_points") or 0)
+                except ValueError:
+                    cpts = 0
+                if 0 <= cpts <= user["points"]:
+                    # A counter is also a new outgoing offer, so the
+                    # trade-slot cap applies to it too.
+                    cap = trade_cap(con, user["id"])
+                    pending = con.execute(
+                        "SELECT COUNT(*) FROM offers WHERE from_user=? "
+                        "AND status='pending'",
+                        (user["id"],)).fetchone()[0]
+                    if pending >= cap:
+                        self.send_html(page(
+                            "Offers",
+                            "<p class='err'>%s</p>"
+                            % cap_error(cap, pending), user))
+                        return
+                    con.execute(
+                        "UPDATE offers SET status='countered' WHERE id=?",
+                        (o["id"],))
+                    con.execute(
+                        "INSERT INTO offers (from_user, to_user,"
+                        " offered_baby, offered_points, wanted_baby,"
+                        " counter_of) VALUES (?,?,?,?,?,?)",
+                        (user["id"], o["from_user"], cb["id"], cpts,
+                         o["offered_baby"], o["id"]))
+                    con.commit()
+        self.redirect("/offers")
+
+    def accept_offer(self, con, o):
+        """Swap the babies, move points, award 20 points to each trader
+        (60 points to the buyer when the trade is for a Black)."""
+        sender = con.execute("SELECT * FROM users WHERE id=?",
+                             (o["from_user"],)).fetchone()
+        receiver = con.execute("SELECT * FROM users WHERE id=?",
+                               (o["to_user"],)).fetchone()
+        wanted = con.execute("SELECT * FROM babies WHERE id=?",
+                             (o["wanted_baby"],)).fetchone()
+        offered = None
+        if o["offered_baby"]:
+            offered = con.execute("SELECT * FROM babies WHERE id=?",
+                                  (o["offered_baby"],)).fetchone()
+        if not wanted or wanted["owner_id"] != o["to_user"]:
+            return
+        if offered and offered["owner_id"] != o["from_user"]:
+            return
+        if wanted["tribe"] == "Blacks" and \
+                sender["points"] < BLACK_TRADE_MIN_POINTS:
+            return
+        if sender["points"] < o["offered_points"]:
+            return
+        # swap ownership; traded babies leave the trade board
+        con.execute("UPDATE babies SET owner_id=?, for_trade=0 WHERE id=?",
+                    (o["from_user"], wanted["id"]))
+        if offered:
+            con.execute("UPDATE babies SET owner_id=?, for_trade=0 "
+                        "WHERE id=?", (o["to_user"], offered["id"]))
+        # points: offered points move sender -> receiver, plus 20 each.
+        # A trade for a Black is worth 60 points to the buyer instead
+        # of 20; the Underground system account earns nothing.
+        is_black_trade = wanted["tribe"] == "Blacks"
+        underground = con.execute(
+            "SELECT id FROM users WHERE username='underground'").fetchone()
+        is_underground = underground and receiver["id"] == underground["id"]
+        buyer_bonus = 60 if is_black_trade else 20
+        receiver_bonus = 0 if is_underground else 20
+        con.execute(
+            "UPDATE users SET points=points-?+%d, points_earned="
+            "points_earned+%d WHERE id=?"
+            % (buyer_bonus, buyer_bonus),
+            (o["offered_points"], sender["id"]))
+        con.execute(
+            "UPDATE users SET points=points+?+%d, points_earned="
+            "points_earned+%d WHERE id=?"
+            % (receiver_bonus, receiver_bonus),
+            (o["offered_points"], receiver["id"]))
+        con.execute("UPDATE offers SET status='accepted' WHERE id=?",
+                    (o["id"],))
+        # withdraw other pending offers touching the traded babies
+        ids = [wanted["id"]] + ([offered["id"]] if offered else [])
+        q = ",".join("?" * len(ids))
+        con.execute(
+            "UPDATE offers SET status='withdrawn' WHERE status='pending' "
+            "AND id != ? AND (wanted_baby IN (%s) OR offered_baby IN (%s))"
+            % (q, q), (o["id"], *ids, *ids))
+        con.commit()
+
+    # -- character creator --
+    def create_form(self, con, user):
+        if self.need_login(user):
+            return
+        user = con.execute("SELECT * FROM users WHERE id=?",
+                           (user["id"],)).fetchone()
+        slots = creator_slots_available(user)
+        if slots < 1:
+            self.send_html(page("Add your own character",
+                                 "<p>Locked. Earn 300 points per character: "
+                                 "you have %d points earned.</p>"
+                                 % user["points_earned"], user))
+            return
+        body = ("""<p>You have %d creator slot(s) open.</p>
+        <form method='post' action='/create_character'>
+        Name: <input name='name' required><br>
+        Tribe: <select name='tribe'>
+        <option>Blues</option><option>Browns</option><option>Reds</option>
+        </select><br>
+        Hoodie pattern: <input name='pattern' required><br>
+        Rhinestone colors: <input name='stones' required><br>
+        <button>Create my character</button></form>"""
+                % slots)
+        self.send_html(page("Add your own character", body, user))
+
+    def do_create(self, con, user):
+        if self.need_login(user):
+            return
+        user = con.execute("SELECT * FROM users WHERE id=?",
+                           (user["id"],)).fetchone()
+        if creator_slots_available(user) < 1:
+            self.redirect("/create")
+            return
+        f = self.form()
+        tribe = f.get("tribe") if f.get("tribe") in STARTERS else "Blues"
+        face = STARTERS[tribe]["face"]
+        mint_baby(con, user["id"], tribe=tribe, name=(f.get("name") or "Custom")[:40],
+                  pattern=(f.get("pattern") or "One of one")[:60],
+                  stones=(f.get("stones") or "mixed rhinestones")[:60],
+                  face=face, is_custom=1)
+        domain = {"Blues": "the sea", "Browns": "the woods",
+                  "Reds": "the sky"}[tribe]
+        add_notice(con, "New character %s (%s) is available — found in %s."
+                   % ((f.get("name") or "Custom")[:40], tribe, domain))
+        con.execute("UPDATE users SET creator_slots_used="
+                    "creator_slots_used+1 WHERE id=?", (user["id"],))
+        con.commit()
+        self.redirect("/me?msg=Character+created!")
+
+    # -- shop / PayPal purchases --
+    def shop(self, con, user):
+        items = con.execute(
+            "SELECT * FROM shop_items WHERE sold=0 ORDER BY id").fetchall()
+        body = ("<p>Individual characters are <b>$%s</b> each, paid "
+                "through PayPal or Cash App Pay (via Stripe)."
+                % PRICE_INDIVIDUAL)
+        if PAYPAL_MODE != "live" and STRIPE_MODE != "live":
+            body += (" Checkout runs in <b>test mode</b>"
+                     " — no real money moves.")
+        body += "</p>"
+        if not items:
+            body += "<p>No individual characters are for sale right now.</p>"
+        for it in items:
+            body += ("<div class='card'><b>%s</b> "
+                     "<span class='tag'>%s</span> "
+                     "<span class='tag'>%s</span><br>"
+                     "Hoodie: %s<br>Rhinestones: %s<br>Face: %s<br>"
+                     "Price: $%s</div>" % (
+                         esc(it["name"]), esc(it["cert"]), esc(it["tribe"]),
+                         esc(it["hoodie_pattern"]), esc(it["stones"]),
+                         esc(it["face"]), esc(it["price"])))
+            if user:
+                body += ("<form method='post' action='/buy'>"
+                         "<input type='hidden' name='shop_item_id' "
+                         "value='%d'><button>Buy for $%s with "
+                         "PayPal</button></form>"
+                         "<form method='post' action='/buy_stripe'>"
+                         "<input type='hidden' name='shop_item_id' "
+                         "value='%d'><button>Buy for $%s with "
+                         "Cash App Pay</button></form>"
+                         % (it["id"], PRICE_INDIVIDUAL,
+                            it["id"], PRICE_INDIVIDUAL))
+            else:
+                body += "<p><a href='/login'>Log in</a> to buy.</p>"
+        body += ("<h2>Leaders — $%s each</h2>"
+                 "<p>Everyone is free to purchase a leader. Choose 1 of "
+                 "the 3 leaders — each is unique, so once one is sold "
+                 "it is gone. A bought leader joins your collection and "
+                 "trades like any other baby, and owning a leader lets "
+                 "you make 2 trades at once.</p>" % PRICE_LEADER)
+        leaders = con.execute(
+            "SELECT * FROM leaders ORDER BY id").fetchall()
+        for ld in leaders:
+            body += ("<div class='card'><b>%s</b> "
+                     "<span class='tag'>%s</span> "
+                     "<span class='tag'>%s</span><br>"
+                     "Hoodie: %s<br>Rhinestones: %s<br>Face: %s<br>"
+                     "Price: $%s%s</div>" % (
+                         esc(ld["name"]), esc(ld["cert"]),
+                         esc(ld["tribe"]), esc(ld["hoodie_pattern"]),
+                         esc(ld["stones"]), esc(ld["face"]),
+                         esc(ld["price"]),
+                         " — <b>SOLD</b>" if ld["sold"] else ""))
+            if user and not ld["sold"]:
+                body += ("<form method='post' action='/buy_leader'>"
+                         "<input type='hidden' name='leader_id' "
+                         "value='%d'><button>Buy for $%s with "
+                         "PayPal</button></form>"
+                         "<form method='post' action='/buy_leader_stripe'>"
+                         "<input type='hidden' name='leader_id' "
+                         "value='%d'><button>Buy for $%s with "
+                         "Cash App Pay</button></form>"
+                         % (ld["id"], PRICE_LEADER,
+                            ld["id"], PRICE_LEADER))
+            elif not user:
+                body += "<p><a href='/login'>Log in</a> to buy.</p>"
+        body += ("<h2>Gods — $%s each (only %d)</h2>"
+                 "<p>Over everyone; their trades are almost impossible. "
+                 "Owning a god lets you make up to 5 trades at "
+                 "once.</p>" % (PRICE_GOD, GOD_COUNT))
+        gods = con.execute("SELECT * FROM gods ORDER BY id").fetchall()
+        for g in gods:
+            body += ("<div class='card'><b>%s</b> "
+                     "<span class='tag'>%s</span><br>"
+                     "Price: $%s%s</div>" % (
+                         esc(g["name"]), esc(g["cert"]),
+                         esc(g["price"]),
+                         " — <b>SOLD</b>" if g["sold"] else ""))
+            if user and not g["sold"]:
+                body += ("<form method='post' action='/buy_god'>"
+                         "<input type='hidden' name='god_id' "
+                         "value='%d'><button>Buy for $%s with "
+                         "PayPal</button></form>"
+                         "<form method='post' action='/buy_god_stripe'>"
+                         "<input type='hidden' name='god_id' "
+                         "value='%d'><button>Buy for $%s with "
+                         "Cash App Pay</button></form>"
+                         % (g["id"], PRICE_GOD,
+                            g["id"], PRICE_GOD))
+            elif not user:
+                body += "<p><a href='/login'>Log in</a> to buy.</p>"
+        body += ("<h2>Points packs</h2>"
+                 "<p>Buy points with real money (or earn them by "
+                 "trading). The 300 points at sign-up are free. Bought "
+                 "points add to your balance only — they do not count "
+                 "toward the character-creator unlock, which stays "
+                 "trade-earned only.</p>")
+        for n, price in POINTS_PACKS:
+            body += ("<div class='card'><b>%d points</b><br>"
+                     "Price: $%s</div>" % (n, price))
+            if user:
+                body += ("<form method='post' action='/buy_points'>"
+                         "<input type='hidden' name='pack' value='%d'>"
+                         "<button>Buy %d points for $%s with "
+                         "PayPal</button></form>"
+                         "<form method='post' action='/buy_points_stripe'>"
+                         "<input type='hidden' name='pack' value='%d'>"
+                         "<button>Buy %d points for $%s with "
+                         "Cash App Pay</button></form>"
+                         % (n, n, price, n, n, price))
+            else:
+                body += "<p><a href='/login'>Log in</a> to buy.</p>"
+        self.send_html(page("Shop", body, user))
+
+    def purchases_page(self, con, user):
+        if self.need_login(user):
+            return
+        rows = con.execute(
+            "SELECT * FROM purchases WHERE user_id=? ORDER BY id DESC",
+            (user["id"],)).fetchall()
+        body = "<p>Your purchases (PayPal or Cash App Pay).</p>"
+        if not rows:
+            body += "<p>None yet. Visit the <a href='/shop'>Shop</a>.</p>"
+        for p in rows:
+            provider = ("Cash App Pay" if p["stripe_session_id"]
+                        else "PayPal")
+            body += ("<div class='card'>%s — %s — $%s — %s — status: %s"
+                     "</div>" % (esc(p["item_type"]), esc(p["item_ref"]),
+                                  esc(p["amount"]), provider,
+                                  esc(p["status"])))
+        self.send_html(page("My Purchases", body, user))
+
+    def do_buy(self, con, user):
+        """Start a $1.99 individual-character purchase via PayPal."""
+        if self.need_login(user):
+            return
+        f = self.form()
+        item = con.execute(
+            "SELECT * FROM shop_items WHERE id=? AND sold=0",
+            (f.get("shop_item_id"),)).fetchone()
+        if not item:
+            self.send_html(page("Shop",
+                                 "<p class='err'>That character is no "
+                                 "longer for sale.</p>", user))
+            return
+        if not paypal_configured():
+            self.send_html(page(
+                "Shop",
+                "<p class='err'>PayPal checkout is not set up yet — the "
+                "shop owner needs to add PayPal credentials (see the "
+                "README for setup steps).</p>", user))
+            return
+        try:
+            order_id, approve_url = paypal_create_order(PRICE_INDIVIDUAL)
+        except PayPalError as e:
+            self.send_html(page("Shop",
+                                 "<p class='err'>Could not start PayPal "
+                                 "checkout: %s</p>" % esc(str(e)), user))
+            return
+        con.execute(
+            "INSERT INTO purchases (user_id, item_type, item_ref, amount,"
+            " paypal_order_id, status) VALUES (?,?,?,?,?,'pending')",
+            (user["id"], "individual", item["cert"], PRICE_INDIVIDUAL,
+             order_id))
+        con.commit()
+        self.redirect(approve_url)
+
+    def buy_return(self, con, user, query):
+        """PayPal sent the buyer back: capture, and grant ONLY on success."""
+        if self.need_login(user):
+            return
+        token = (query.get("token") or [""])[0]
+        pur = con.execute(
+            "SELECT * FROM purchases WHERE paypal_order_id=? AND user_id=?",
+            (token, user["id"])).fetchone()
+        if not pur:
+            self.send_html(page("Shop",
+                                 "<p class='err'>No matching purchase "
+                                 "found.</p>", user))
+            return
+        if pur["status"] == "completed":
+            if pur["item_type"] == "points":
+                msg = ("That purchase already completed — the points "
+                       "are in your balance.")
+            else:
+                msg = ("That purchase already completed — your new "
+                       "hoodie baby is in <a href='/me'>My "
+                       "Collection</a>.")
+            self.send_html(page("Shop", "<p class='ok'>%s</p>" % msg,
+                                 user))
+            return
+        if pur["status"] in ("failed", "cancelled"):
+            self.send_html(page(
+                "Shop",
+                "<p class='err'>That purchase did not complete — nothing "
+                "was granted. You can try again from the "
+                "<a href='/shop'>Shop</a>.</p>", user))
+            return
+        try:
+            status = paypal_capture_order(token)
+        except PayPalError as e:
+            con.execute("UPDATE purchases SET status='failed' WHERE id=?",
+                        (pur["id"],))
+            con.commit()
+            self.send_html(page(
+                "Shop",
+                "<p class='err'>PayPal capture failed: %s — nothing was "
+                "granted.</p>" % esc(str(e)), user))
+            return
+        if status != "COMPLETED":
+            con.execute("UPDATE purchases SET status='failed' WHERE id=?",
+                        (pur["id"],))
+            con.commit()
+            self.send_html(page(
+                "Shop",
+                "<p class='err'>Payment did not complete (PayPal status: "
+                "%s) — nothing was granted.</p>" % esc(status), user))
+            return
+        # Capture succeeded: grant via the shared helper — it re-checks
+        # the item is still available, so a sold item grants nothing.
+        ok, kind, name, cert, extra = grant_purchase(con, pur,
+                                                     user["id"])
+        if not ok:
+            con.execute("UPDATE purchases SET status='failed' WHERE id=?",
+                        (pur["id"],))
+            con.commit()
+            self.send_html(page("Shop",
+                                 "<p class='err'>%s</p>" % esc(extra),
+                                 user))
+            return
+        con.execute("UPDATE purchases SET status='completed' WHERE id=?",
+                    (pur["id"],))
+        con.commit()
+        self.send_html(page(
+            "Shop",
+            "<p class='ok'>%s</p>"
+            % self.grant_success_message(kind, name, cert, extra), user))
+
+    def buy_cancel(self, con, user, query):
+        if self.need_login(user):
+            return
+        token = (query.get("token") or [""])[0]
+        pur = con.execute(
+            "SELECT * FROM purchases WHERE paypal_order_id=? AND user_id=?"
+            " AND status='pending'",
+            (token, user["id"])).fetchone()
+        if pur:
+            con.execute("UPDATE purchases SET status='cancelled' "
+                        "WHERE id=?", (pur["id"],))
+            con.commit()
+        self.send_html(page(
+            "Shop",
+            "<p>Purchase cancelled — nothing was charged. You can try "
+            "again from the <a href='/shop'>Shop</a>.</p>", user))
+
+    # -- shop / Stripe (Cash App Pay) purchases --
+    def do_buy_stripe(self, con, user):
+        """Start a $1.99 individual-character purchase via Stripe
+        Checkout with Cash App Pay."""
+        if self.need_login(user):
+            return
+        f = self.form()
+        item = con.execute(
+            "SELECT * FROM shop_items WHERE id=? AND sold=0",
+            (f.get("shop_item_id"),)).fetchone()
+        if not item:
+            self.send_html(page("Shop",
+                                 "<p class='err'>That character is no "
+                                 "longer for sale.</p>", user))
+            return
+        if not stripe_configured():
+            self.send_html(page(
+                "Shop",
+                "<p class='err'>Cash App Pay checkout is not set up yet "
+                 "— the shop owner needs to add Stripe credentials (see "
+                 "the README for setup steps).</p>", user))
+            return
+        try:
+            session_id, checkout_url = stripe_create_session(
+                199, "%s (%s)" % (item["name"], item["cert"]))
+        except StripeError as e:
+            self.send_html(page("Shop",
+                                 "<p class='err'>Could not start Cash App "
+                                 "Pay checkout: %s</p>" % esc(str(e)), user))
+            return
+        con.execute(
+            "INSERT INTO purchases (user_id, item_type, item_ref, amount,"
+            " stripe_session_id, status) VALUES (?,?,?,?,?,'pending')",
+            (user["id"], "individual", item["cert"], PRICE_INDIVIDUAL,
+             session_id))
+        con.commit()
+        self.redirect(checkout_url)
+
+    # -- shop / leader, god, points purchases (both providers) --
+    def begin_paypal_purchase(self, con, user, item_type, item_ref,
+                              amount):
+        """Create a PayPal order + pending purchase. Returns the
+        approval URL, or None after sending an error page."""
+        if not paypal_configured():
+            self.send_html(page(
+                "Shop",
+                "<p class='err'>PayPal checkout is not set up yet — the "
+                "shop owner needs to add PayPal credentials (see the "
+                "README for setup steps).</p>", user))
+            return None
+        try:
+            order_id, approve_url = paypal_create_order(amount)
+        except PayPalError as e:
+            self.send_html(page("Shop",
+                                 "<p class='err'>Could not start PayPal "
+                                 "checkout: %s</p>" % esc(str(e)), user))
+            return None
+        con.execute(
+            "INSERT INTO purchases (user_id, item_type, item_ref, amount,"
+            " paypal_order_id, status) VALUES (?,?,?,?,?,'pending')",
+            (user["id"], item_type, item_ref, amount, order_id))
+        con.commit()
+        return approve_url
+
+    def begin_stripe_purchase(self, con, user, item_type, item_ref,
+                              amount_cents, amount, name):
+        """Create a Stripe Checkout Session + pending purchase. Returns
+        the checkout URL, or None after sending an error page."""
+        if not stripe_configured():
+            self.send_html(page(
+                "Shop",
+                "<p class='err'>Cash App Pay checkout is not set up yet "
+                 "— the shop owner needs to add Stripe credentials (see "
+                 "the README for setup steps).</p>", user))
+            return None
+        try:
+            session_id, checkout_url = stripe_create_session(
+                amount_cents, name)
+        except StripeError as e:
+            self.send_html(page("Shop",
+                                 "<p class='err'>Could not start Cash App "
+                                 "Pay checkout: %s</p>" % esc(str(e)), user))
+            return None
+        con.execute(
+            "INSERT INTO purchases (user_id, item_type, item_ref, amount,"
+            " stripe_session_id, status) VALUES (?,?,?,?,?,'pending')",
+            (user["id"], item_type, item_ref, amount, session_id))
+        con.commit()
+        return checkout_url
+
+    def do_buy_leader(self, con, user):
+        """Start a $10.00 leader purchase via PayPal (buyer chooses 1
+        of the 3 leaders; each is unique)."""
+        if self.need_login(user):
+            return
+        f = self.form()
+        ld = con.execute(
+            "SELECT * FROM leaders WHERE id=? AND sold=0",
+            (f.get("leader_id"),)).fetchone()
+        if not ld:
+            self.send_html(page("Shop",
+                                 "<p class='err'>That leader is no "
+                                 "longer for sale.</p>", user))
+            return
+        url = self.begin_paypal_purchase(con, user, "leader", ld["cert"],
+                                         PRICE_LEADER)
+        if url:
+            self.redirect(url)
+
+    def do_buy_leader_stripe(self, con, user):
+        """Start a $10.00 leader purchase via Cash App Pay."""
+        if self.need_login(user):
+            return
+        f = self.form()
+        ld = con.execute(
+            "SELECT * FROM leaders WHERE id=? AND sold=0",
+            (f.get("leader_id"),)).fetchone()
+        if not ld:
+            self.send_html(page("Shop",
+                                 "<p class='err'>That leader is no "
+                                 "longer for sale.</p>", user))
+            return
+        url = self.begin_stripe_purchase(
+            con, user, "leader", ld["cert"], 1000, PRICE_LEADER,
+            "Leader %s (%s)" % (ld["name"], ld["cert"]))
+        if url:
+            self.redirect(url)
+
+    def do_buy_god(self, con, user):
+        """Start a $40.00 god-slot purchase via PayPal."""
+        if self.need_login(user):
+            return
+        f = self.form()
+        g = con.execute(
+            "SELECT * FROM gods WHERE id=? AND sold=0",
+            (f.get("god_id"),)).fetchone()
+        if not g:
+            self.send_html(page("Shop",
+                                 "<p class='err'>That god is no longer "
+                                 "for sale.</p>", user))
+            return
+        url = self.begin_paypal_purchase(con, user, "god", g["cert"],
+                                         PRICE_GOD)
+        if url:
+            self.redirect(url)
+
+    def do_buy_god_stripe(self, con, user):
+        """Start a $40.00 god-slot purchase via Cash App Pay."""
+        if self.need_login(user):
+            return
+        f = self.form()
+        g = con.execute(
+            "SELECT * FROM gods WHERE id=? AND sold=0",
+            (f.get("god_id"),)).fetchone()
+        if not g:
+            self.send_html(page("Shop",
+                                 "<p class='err'>That god is no longer "
+                                 "for sale.</p>", user))
+            return
+        url = self.begin_stripe_purchase(
+            con, user, "god", g["cert"], 4000, PRICE_GOD,
+            "God slot %s" % g["cert"])
+        if url:
+            self.redirect(url)
+
+    def do_buy_points(self, con, user):
+        """Start a points-pack purchase via PayPal."""
+        if self.need_login(user):
+            return
+        f = self.form()
+        try:
+            n = int(f.get("pack") or 0)
+        except ValueError:
+            n = 0
+        if n not in POINTS_PACK_PRICES:
+            self.send_html(page("Shop",
+                                 "<p class='err'>That points pack is not "
+                                 "for sale.</p>", user))
+            return
+        url = self.begin_paypal_purchase(con, user, "points",
+                                         "points-%d" % n,
+                                         POINTS_PACK_PRICES[n])
+        if url:
+            self.redirect(url)
+
+    def do_buy_points_stripe(self, con, user):
+        """Start a points-pack purchase via Cash App Pay."""
+        if self.need_login(user):
+            return
+        f = self.form()
+        try:
+            n = int(f.get("pack") or 0)
+        except ValueError:
+            n = 0
+        if n not in POINTS_PACK_PRICES:
+            self.send_html(page("Shop",
+                                 "<p class='err'>That points pack is not "
+                                 "for sale.</p>", user))
+            return
+        cents = int(round(float(POINTS_PACK_PRICES[n]) * 100))
+        url = self.begin_stripe_purchase(
+            con, user, "points", "points-%d" % n, cents,
+            POINTS_PACK_PRICES[n], "%d points pack" % n)
+        if url:
+            self.redirect(url)
+
+    def grant_success_message(self, kind, name, cert, extra):
+        """Success line for a granted purchase."""
+        if kind == "points":
+            return ("Payment complete! <b>%d points</b> added to your "
+                    "balance." % extra)
+        if kind == "leader":
+            return ("Payment complete! Your new leader <b>%s</b> (%s) "
+                    "is in <a href='/me'>My Collection</a>."
+                    % (esc(name), esc(cert)))
+        if kind == "god":
+            return ("Payment complete! Your new god <b>%s</b> (%s) is "
+                    "in <a href='/me'>My Collection</a>."
+                    % (esc(name), esc(cert)))
+        return ("Payment complete! Your new hoodie baby <b>%s</b> (%s) "
+                "is in <a href='/me'>My Collection</a>."
+                % (esc(name), esc(cert)))
+
+    def stripe_return(self, con, user, query):
+        """Stripe sent the buyer back: verify the session server-side,
+        and grant ONLY on a paid session."""
+        if self.need_login(user):
+            return
+        session_id = (query.get("session_id") or [""])[0]
+        pur = con.execute(
+            "SELECT * FROM purchases WHERE stripe_session_id=? AND "
+            "user_id=?", (session_id, user["id"])).fetchone()
+        if not pur:
+            self.send_html(page("Shop",
+                                 "<p class='err'>No matching purchase "
+                                 "found.</p>", user))
+            return
+        if pur["status"] == "completed":
+            if pur["item_type"] == "points":
+                msg = ("That purchase already completed — the points "
+                       "are in your balance.")
+            else:
+                msg = ("That purchase already completed — your new "
+                       "hoodie baby is in <a href='/me'>My "
+                       "Collection</a>.")
+            self.send_html(page("Shop", "<p class='ok'>%s</p>" % msg,
+                                 user))
+            return
+        if pur["status"] in ("failed", "cancelled"):
+            self.send_html(page(
+                "Shop",
+                "<p class='err'>That purchase did not complete — nothing "
+                "was granted. You can try again from the "
+                "<a href='/shop'>Shop</a>.</p>", user))
+            return
+        try:
+            status = stripe_session_payment_status(session_id)
+        except StripeError as e:
+            con.execute("UPDATE purchases SET status='failed' WHERE id=?",
+                        (pur["id"],))
+            con.commit()
+            self.send_html(page(
+                "Shop",
+                "<p class='err'>Cash App Pay verification failed: %s — "
+                "nothing was granted.</p>" % esc(str(e)), user))
+            return
+        if status != "paid":
+            con.execute("UPDATE purchases SET status='failed' WHERE id=?",
+                        (pur["id"],))
+            con.commit()
+            self.send_html(page(
+                "Shop",
+                "<p class='err'>Payment did not complete (Stripe status: "
+                "%s) — nothing was granted.</p>" % esc(status), user))
+            return
+        # Session paid: grant via the shared helper — it re-checks the
+        # item is still available, so a sold item grants nothing.
+        ok, kind, name, cert, extra = grant_purchase(con, pur,
+                                                     user["id"])
+        if not ok:
+            con.execute("UPDATE purchases SET status='failed' WHERE id=?",
+                        (pur["id"],))
+            con.commit()
+            self.send_html(page("Shop",
+                                 "<p class='err'>%s</p>" % esc(extra),
+                                 user))
+            return
+        con.execute("UPDATE purchases SET status='completed' WHERE id=?",
+                    (pur["id"],))
+        con.commit()
+        self.send_html(page(
+            "Shop",
+            "<p class='ok'>%s</p>"
+            % self.grant_success_message(kind, name, cert, extra), user))
+
+    def stripe_cancel(self, con, user, query):
+        if self.need_login(user):
+            return
+        session_id = (query.get("session_id") or [""])[0]
+        pur = con.execute(
+            "SELECT * FROM purchases WHERE stripe_session_id=? AND "
+            "user_id=? AND status='pending'",
+            (session_id, user["id"])).fetchone()
+        if pur:
+            con.execute("UPDATE purchases SET status='cancelled' "
+                        "WHERE id=?", (pur["id"],))
+            con.commit()
+        self.send_html(page(
+            "Shop",
+            "<p>Purchase cancelled — nothing was charged. You can try "
+            "again from the <a href='/shop'>Shop</a>.</p>", user))
+
+
+if __name__ == "__main__":
+    init_db()
+    server = ThreadingHTTPServer((HOST, PORT), Handler)
+    print("Escamo Hoodie Babies Trade running on http://%s:%d"
+          % (HOST, PORT))
+    server.serve_forever()

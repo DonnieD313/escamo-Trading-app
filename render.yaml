@@ -1,0 +1,49 @@
+# Render blueprint for the Escamo Hoodie Babies Trade app.
+#
+# How this is used (see DEPLOY.md): Doneil connects this code to Render,
+# Render reads this file, and creates ONE web service with the settings
+# below. No account, card, or secret ever goes in this file.
+#
+# IMPORTANT — read before changing anything here:
+# - Plan is "starter" on purpose. Render's free tier puts the app to
+#   sleep when nobody visits, which is wrong for a live trading app.
+#   Starter never sleeps.
+# - The app is Python standard library ONLY, so there is nothing to
+#   install. The build command intentionally does nothing.
+# - PORT is NOT set here. Render injects its own PORT and the app
+#   already reads it.
+# - NO payment keys are in this file. PayPal and Stripe keys are added
+#   later, by hand, in the Render dashboard — never in the code.
+# - The persistent disk is REQUIRED, not optional. The app keeps every
+#   account, baby, trade, and purchase in one SQLite file (app.db).
+#   Without the disk, Render would wipe that file on every redeploy
+#   and every account would vanish. With the disk, the file survives
+#   restarts and redeploys.
+
+services:
+  - type: web
+    name: escamo-trading-app
+    runtime: python
+    plan: starter
+    buildCommand: "true"
+    startCommand: python3 app.py
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: COOKIE_SECURE
+        value: 1
+      - key: PAYPAL_MODE
+        value: sandbox
+      - key: STRIPE_MODE
+        value: test
+      - key: ESCAMO_DB
+        value: /data/app.db
+      # PUBLIC_BASE_URL is set AFTER the first deploy, once Render
+      # hands out the live address (see DEPLOY.md step 6). Until then
+      # the app falls back to a local address, which is fine for the
+      # first test deploy but must be fixed before real trading, or
+      # PayPal/Stripe return links will point at the wrong place.
+    disk:
+      name: escamo-data
+      mountPath: /data
+      sizeGB: 1
