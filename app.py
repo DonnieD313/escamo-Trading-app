@@ -659,91 +659,6 @@ def init_db():
     con.close()
 
 
-# ---------------------------------------------------------------- migration
-# Temporary one-time move tool (removed after the old->new service move).
-# Only active when MIGRATE_TOKEN is set in the environment; the token
-# itself is never in the code, the repo, or chat. Export returns JSON
-# (passwords stay as salted hashes, never plain text); import replaces
-# the migrated tables wholesale, checks foreign keys, and commits only
-# on success. Sessions and pending signups are deliberately NOT moved:
-# everyone simply logs in again on the new service.
-MIGRATE_TABLES = ["users", "babies", "monthly_gifts", "choice_claims",
-                  "popup_items", "offers", "notices", "purchases",
-                  "shop_items", "leaders", "gods"]
-
-
-def migrate_token_ok(provided):
-    token = os.environ.get("MIGRATE_TOKEN", "")
-    return bool(token) and bool(provided) and \
-        secrets.compare_digest(provided, token)
-
-
-def migrate_export(con, table=None):
-    tables = [table] if table else MIGRATE_TABLES
-    out = {"tables": {}}
-    for t in tables:
-        if t not in MIGRATE_TABLES:
-            raise ValueError("unknown table: %s" % t)
-        cols = [r[1] for r in
-                con.execute("PRAGMA table_info(%s)" % t).fetchall()]
-        rows = con.execute(
-            "SELECT * FROM %s ORDER BY id" % t).fetchall()
-        out["tables"][t] = {"columns": cols,
-                            "rows": [list(r) for r in rows]}
-    return out
-
-
-def migrate_import(con, payload):
-    tables = payload.get("tables") if isinstance(payload, dict) else None
-    if not isinstance(tables, dict):
-        raise ValueError("payload has no tables object")
-    for t in tables:
-        if t not in MIGRATE_TABLES:
-            raise ValueError("unknown table: %s" % t)
-    counts = {}
-    con.execute("PRAGMA foreign_keys = OFF")
-    try:
-        for t in MIGRATE_TABLES:
-            if t not in tables:
-                continue
-            info = tables[t]
-            cols = info["columns"]
-            rows = info["rows"]
-            target_cols = [r[1] for r in
-                           con.execute("PRAGMA table_info(%s)" % t
-                                       ).fetchall()]
-            keep = [c for c in cols if c in target_cols]
-            if not keep:
-                continue
-            idx = [cols.index(c) for c in keep]
-            con.execute("DELETE FROM %s" % t)
-            q = "INSERT INTO %s (%s) VALUES (%s)" % (
-                t, ",".join(keep),
-                ",".join("?" for _ in keep))
-            for row in rows:
-                con.execute(q, [row[i] for i in idx])
-            counts[t] = len(rows)
-            maxid = con.execute(
-                "SELECT MAX(id) FROM %s" % t).fetchone()[0]
-            if maxid is None:
-                con.execute("DELETE FROM sqlite_sequence WHERE name=?",
-                            (t,))
-            elif con.execute("UPDATE sqlite_sequence SET seq=? "
-                             "WHERE name=?", (maxid, t)).rowcount == 0:
-                con.execute("INSERT INTO sqlite_sequence (name, seq) "
-                            "VALUES (?, ?)", (t, maxid))
-        con.execute("PRAGMA foreign_keys = ON")
-        bad = con.execute("PRAGMA foreign_key_check").fetchall()
-        if bad:
-            raise ValueError("foreign key check failed: %r" % (bad,))
-        con.commit()
-    except Exception:
-        con.rollback()
-        con.execute("PRAGMA foreign_keys = ON")
-        raise
-    return counts
-
-
 def hash_password(password, salt):
     return hashlib.pbkdf2_hmac("sha256", password.encode(),
                                salt.encode(), 200_000).hex()
@@ -1966,10 +1881,6 @@ class Handler(BaseHTTPRequestHandler):
                 self.baby_detail(con, user, path[6:])
             elif path.startswith("/img/"):
                 self.serve_img(path[5:])
-            elif path == "/migrate_export":
-                self.migrate_export_route(con, query)
-            elif path == "/migrate_import":
-                self.migrate_import_form()
             else:
                 self.send_html(page("Not found", "<p>Unknown page.</p>",
                                     user), 404)
@@ -1983,16 +1894,6 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self._ensure_csrf()
             self._form = self.form()
-            # Temporary migration import: token-gated, so it bypasses
-            # the cookie CSRF check (the secret token is the check).
-            if path == "/migrate_import":
-                if migrate_token_ok(self._form.get("migrate_token", "")):
-                    self.do_migrate_import(con)
-                else:
-                    self.send_html(page("Not found",
-                                        "<p>Unknown action.</p>",
-                                        None), 404)
-                return
             # CSRF check: the submitted token must match the cookie
             # token. A missing or wrong token is rejected before any
             # action runs, so a forged cross-site POST can do nothing.
@@ -2048,60 +1949,6 @@ class Handler(BaseHTTPRequestHandler):
                                     user), 404)
         finally:
             con.close()
-
-    # -- temporary migration routes (removed after the move) --
-    def migrate_export_route(self, con, query):
-        token = (query.get("token") or [""])[0]
-        if not migrate_token_ok(token):
-            self.send_html(page("Not found", "<p>Unknown page.</p>",
-                                None), 404)
-            return
-        table = (query.get("table") or [None])[0]
-        try:
-            data = migrate_export(con, table)
-        except ValueError as e:
-            self.send_html(page("Error", "<p>%s</p>" % esc(str(e)),
-                                None), 400)
-            return
-        raw = json.dumps(data).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(raw)))
-        self.end_headers()
-        self.wfile.write(raw)
-
-    def migrate_import_form(self):
-        body = ("<h2>Move data in</h2>"
-                "<p>Paste the exported JSON below, with the secret "
-                "token, to replace the migrated tables.</p>"
-                "<form method='post' action='/migrate_import'>"
-                "<label>Secret token "
-                "<input name='migrate_token'></label><br>"
-                "<label>Export JSON<br>"
-                "<textarea name='payload' rows='20' cols='80'>"
-                "</textarea></label><br>"
-                "<button>Import</button></form>")
-        self.send_html(page("Move data in", body, None))
-
-    def do_migrate_import(self, con):
-        try:
-            payload = json.loads(self._form.get("payload", ""))
-        except ValueError:
-            self.send_html(page("Error",
-                                "<p>That JSON could not be read.</p>",
-                                None), 400)
-            return
-        try:
-            counts = migrate_import(con, payload)
-        except Exception as e:
-            self.send_html(page("Error", "<p>Import failed: %s</p>"
-                                % esc(str(e)), None), 400)
-            return
-        lines = "".join("<li>%s: %d rows</li>" % (t, n)
-                         for t, n in counts.items())
-        self.send_html(page("Move data in",
-                            "<p class='ok'>Import complete — foreign key "
-                            "check passed.</p><ul>%s</ul>" % lines, None))
 
     def need_login(self, user):
         if not user:
