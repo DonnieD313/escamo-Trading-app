@@ -52,6 +52,19 @@ REALISTIC_IMAGES = {
     "Aaliyah Bee": "aaliyah-bee.jpg", "Jazmyn": "jazmyn.jpg",
     "Muzle Back": "muzle-back.jpg", "Baraka": "baraka.jpg",
     "Sirus V": "sirus-v.jpg",
+    # Starter-roster characters: the weekly pop-up is always a roster
+    # character, so photographing the whole roster makes every future
+    # week's pop-up card realistic too.
+    "Marina": "marina.jpg", "Coral": "coral.jpg",
+    "Pearl": "pearl.jpg", "Tide": "tide.jpg", "Kai": "kai.jpg",
+    "Willow": "willow.jpg", "Fern": "fern.jpg",
+    "Hazel": "hazel.jpg", "Rowan": "rowan.jpg",
+    "Ivy": "ivy.jpg", "Maple": "maple.jpg",
+    "Juniper": "juniper.jpg", "Sage": "sage.jpg",
+    "Ember": "ember.jpg", "Storm": "storm.jpg",
+    "Skye": "skye.jpg", "Ash": "ash.jpg", "Blaze": "blaze.jpg",
+    "Aurora": "aurora.jpg", "Cinder": "cinder.jpg",
+    "Tempest": "tempest.jpg",
 }
 # Set COOKIE_SECURE=1 when the app runs behind HTTPS so session and
 # CSRF cookies are only sent over secure connections. It stays off by
@@ -1324,7 +1337,7 @@ def portrait_svg(b, size=120):
 def realistic_img_file(b):
     """Realistic photo filename for this baby, or None.
 
-    The 19 photographed characters match by name; every Black baby
+    The 40 photographed characters match by name; every Black baby
     (any name) uses the Black Miner photo. Anything else returns
     None and keeps its SVG portrait.
     """
@@ -2487,7 +2500,7 @@ class Handler(BaseHTTPRequestHandler):
                      "<span class='tag'>%s</span><br>"
                      "Hoodie: %s<br>Rhinestones: %s<br>Face: %s<br>"
                      "Price: $%s</div>" % (
-                         portrait_svg(popup),
+                         baby_img_html(popup),
                          esc(popup["name"]),
                          gender_marker(baby_gender(popup["tribe"],
                                                    popup["hoodie_pattern"],

@@ -204,16 +204,54 @@ def main():
           escamo_app.realistic_img_file({"name": "Muzle Back",
                                          "tribe": "Gods"})
           == "muzle-back.jpg")
-    check("no realistic photo for starter babies",
-          escamo_app.realistic_img_file({"name": "Marina",
+    check("no realistic photo for unknown babies",
+          escamo_app.realistic_img_file({"name": "Zorp",
                                          "tribe": "Blues"}) is None)
     check("photo html uses img tag when file exists",
           "<img src='/img/harbor.jpg'" in
           escamo_app.baby_img_html({"name": "Harbor",
                                     "tribe": "Blues"}))
     check("photo html falls back to SVG without a photo",
-          "<svg" in escamo_app.baby_img_html({"name": "Marina",
+          "<svg" in escamo_app.baby_img_html({"name": "Zorp",
                                               "tribe": "Blues"}))
+    # Starter-roster photos: every roster name resolves to its photo,
+    # so the weekly pop-up (always a roster character) renders a
+    # realistic photo instead of the cartoon SVG.
+    roster_expected = {
+        "Marina": "marina.jpg", "Coral": "coral.jpg",
+        "Pearl": "pearl.jpg", "Tide": "tide.jpg", "Kai": "kai.jpg",
+        "Willow": "willow.jpg", "Fern": "fern.jpg",
+        "Hazel": "hazel.jpg", "Rowan": "rowan.jpg",
+        "Ivy": "ivy.jpg", "Maple": "maple.jpg",
+        "Juniper": "juniper.jpg", "Sage": "sage.jpg",
+        "Ember": "ember.jpg", "Storm": "storm.jpg",
+        "Skye": "skye.jpg", "Ash": "ash.jpg", "Blaze": "blaze.jpg",
+        "Aurora": "aurora.jpg", "Cinder": "cinder.jpg",
+        "Tempest": "tempest.jpg",
+    }
+    roster_tribes = {}
+    for _t, _d in escamo_app.STARTERS.items():
+        for _n in _d["names"]:
+            roster_tribes[_n] = _t
+    roster_ok = all(
+        escamo_app.realistic_img_file(
+            {"name": _n, "tribe": roster_tribes[_n]}) == _f
+        for _n, _f in roster_expected.items())
+    check("realistic photo file for all 21 roster characters", roster_ok)
+    check("pop-up card uses a realistic photo for its character",
+          "<img src='/img/blaze.jpg'" in
+          escamo_app.baby_img_html({"name": "Blaze", "tribe": "Reds",
+                                    "hoodie_pattern": "Ember Dusk",
+                                    "stones": "orange + red rhinestones",
+                                    "face": "angel-like",
+                                    "cert": "EHB-P-2026-W44"}))
+    check("pop-up card falls back to SVG for unknown characters",
+          "<svg" in escamo_app.baby_img_html({"name": "Zorp",
+                                              "tribe": "Reds",
+                                              "hoodie_pattern": "New Pattern",
+                                              "stones": "pink stones",
+                                              "face": "angel-like",
+                                              "cert": "EHB-P-2026-W99"}))
     if os.path.exists(DB):
         os.remove(DB)
     env = dict(os.environ, PORT=str(PORT), ESCAMO_DB=DB)
@@ -258,8 +296,9 @@ def main():
                   "got %d" % len(babies))
             check("%s starts with 300 points" % name, row["points"] == 300)
         s, me_html = get(alice, "/me")
-        check("collection page shows portraits",
-              "<svg" in me_html and alice_row["username"] in me_html)
+        check("collection page shows pictures",
+              ("<svg" in me_html or "/img/" in me_html)
+              and alice_row["username"] in me_html)
         alice_baby = con.execute(
             "SELECT * FROM babies WHERE owner_id=?",
             (alice_row["id"],)).fetchone()
@@ -450,7 +489,8 @@ def main():
             s, shop_html = get(carol, "/shop", base=mock_base)
             check("shop lists individual characters at $1.99",
                   "1.99" in shop_html)
-            check("shop shows portraits", "<svg" in shop_html)
+            check("shop shows pictures",
+                  "<svg" in shop_html or "/img/" in shop_html)
             check("shop shows leader price $10.00", "10.00" in shop_html)
             check("shop shows god price $40.00", "40.00" in shop_html)
             check("shop shows leader choices for purchase",
@@ -1366,6 +1406,11 @@ def main():
                   "<s>$1.99</s>" in shop_html)
             check("shop shows pop-up color section",
                   "New color pop-up" in shop_html)
+            popup_idx = shop_html.find("New color pop-up")
+            check("shop pop-up card uses a realistic photo",
+                  popup_idx >= 0
+                  and "<img src='/img/" in
+                  shop_html[popup_idx:popup_idx + 800])
             s, notices_html = get(dana, "/notices", base=bbase)
             check("notices board announces the pop-up",
                   "popped up" in notices_html)
@@ -1583,7 +1628,7 @@ def main():
             check("god card shows the male marker",
                   "♂" in shop2_html)
             # Realistic photos over HTTP: the /img route serves the
-            # 19 photos, rejects traversal, and cards use them with
+            # 40 photos, rejects traversal, and cards use them with
             # SVG fallback for babies without a photo.
             def get_raw(path):
                 conn = http.client.HTTPConnection(
@@ -1602,6 +1647,12 @@ def main():
                 "damiana-june.jpg", "aaliyah-bee.jpg", "jazmyn.jpg",
                 "muzle-back.jpg", "baraka.jpg", "sirus-v.jpg",
                 "black-miner.jpg",
+                "marina.jpg", "coral.jpg", "pearl.jpg", "tide.jpg",
+                "kai.jpg", "willow.jpg", "fern.jpg", "hazel.jpg",
+                "rowan.jpg", "ivy.jpg", "maple.jpg", "juniper.jpg",
+                "sage.jpg", "ember.jpg", "storm.jpg", "skye.jpg",
+                "ash.jpg", "blaze.jpg", "aurora.jpg", "cinder.jpg",
+                "tempest.jpg",
             ]
             photos_ok = True
             for fname in photo_files:
@@ -1610,7 +1661,7 @@ def main():
                         and hdrs.get("Content-Type") == "image/jpeg"
                         and len(body) > 5000):
                     photos_ok = False
-            check("image route serves all 19 photos", photos_ok)
+            check("image route serves all 40 photos", photos_ok)
             st, _, _ = get_raw("/img/../app.py")
             check("image route rejects dot-dot traversal", st == 404)
             st, _, _ = get_raw("/img/%2e%2e%2fapp.py")
@@ -1667,8 +1718,21 @@ def main():
             s, me_html = get(photo_jar, "/me")
             check("collection Harbor baby shows its photo",
                   "/img/harbor.jpg" in me_html)
-            check("collection starter baby keeps SVG fallback",
-                  "<svg" in me_html)
+            # A baby with no photo (unknown name) must still render
+            # via the SVG portrait engine.
+            mcon = sqlite3.connect(DB)
+            mcon.execute(
+                "INSERT INTO babies (cert, owner_id, name, tribe,"
+                " hoodie_pattern, stones, face)"
+                " VALUES (?,?,?,?,?,?,?)",
+                ("EHB-TEST-ZORP", photo_row["id"], "Zorp", "Blues",
+                 "Odd Pattern", "purple stones",
+                 "fish-like"))
+            mcon.commit()
+            mcon.close()
+            s, me_html = get(photo_jar, "/me")
+            check("collection baby without a photo keeps SVG fallback",
+                  "<svg" in me_html and "Zorp" in me_html)
             bcon.close()
         finally:
             bproc.terminate()
