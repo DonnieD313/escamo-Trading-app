@@ -2202,7 +2202,7 @@ def main():
                   and "paste it anywhere!" in home
                   and "id='share-notice'" in home)
             check("share text names the platform and 600 points",
-                  "Escamo Hoodie Babies Trade" in home
+                  "Hoodie Babies Trade" in home
                   and "600 points" in home)
             check("share uses the current page URL, not a hardcoded one",
                   "window.location.href" in home)

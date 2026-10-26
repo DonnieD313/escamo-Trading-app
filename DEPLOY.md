@@ -1,4 +1,4 @@
-# Putting Escamo Hoodie Babies Trade live on Render
+# Putting Hoodie Babies Trade live on Render
 
 Plain-language version. Nothing here needs a programmer — but two steps
 need Doneil's own login and card, so those are his steps, not anyone
@@ -55,8 +55,8 @@ a repo, skip this step.
 ### 4. Check that it opens
 
 Render will give the app an address like
-`https://escamo-trading-app.onrender.com`. Open it in a browser. You
-should see the Escamo home page. Trading, signing up, and the free
+`https://hoodie-babies-trading-app.onrender.com`. Open it in a browser. You
+should see the Hoodie Babies home page. Trading, signing up, and the free
 baby + 300 points all work right away.
 
 ### 5. Set the live address, then redeploy (do not skip this)
@@ -69,7 +69,7 @@ send buyers back to the right place after payment.
    **Environment**, and add:
    - Key: `PUBLIC_BASE_URL`
    - Value: your address, exactly as shown, e.g.
-     `https://escamo-trading-app.onrender.com`
+     `https://hoodie-babies-trading-app.onrender.com`
 3. Save. Render will redeploy automatically. Wait for it to finish,
    then open the address again and confirm the home page still loads.
 

@@ -1,4 +1,4 @@
-# Render blueprint for the Escamo Hoodie Babies Trade app.
+# Render blueprint for the Hoodie Babies Trade app.
 #
 # How this is used (see DEPLOY.md): Doneil connects this code to Render,
 # Render reads this file, and creates ONE web service with the settings

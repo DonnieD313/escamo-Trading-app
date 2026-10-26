@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Escamo Hoodie Babies Trade - real multi-user trading app.
+"""Hoodie Babies Trade - real multi-user trading app.
 
 Standard library only: http.server + sqlite3. No paid services, no accounts
 beyond a local username/password (passwords are hashed with PBKDF2, never
@@ -1224,8 +1224,8 @@ share_script = (
     "<script>function sharePage(){"
     "var n=document.getElementById('share-notice');"
     "function msg(t){n.textContent=t;}"
-    "var d={title:'Escamo Hoodie Babies Trade',"
-    "text:'Join Escamo Hoodie Babies Trade — pick your tribe, "
+    "var d={title:'Hoodie Babies Trade',"
+    "text:'Join Hoodie Babies Trade — pick your tribe, "
     "get your starter baby and 600 points, and start trading!',"
     "url:window.location.href};"
     "if(navigator.share){navigator.share(d).catch(function(){});}"
@@ -1958,7 +1958,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- pages --
     def home(self, con, user):
-        body = """<p>Welcome to <b>Escamo Hoodie Babies Trade</b> — a trading
+        body = """<p>Welcome to <b>Hoodie Babies Trade</b> — a trading
         platform for small 3-inch hoodie babies. Every hoodie is 1-of-1:
         no two are the same, and that's what makes the trade better.</p>
         <p>Join and you get <b>one free hoodie baby</b> and
@@ -2017,7 +2017,7 @@ class Handler(BaseHTTPRequestHandler):
                  "<p><a href='/notices'>Notices</a> — see what's new and "
                  "where it was found.</p>" % (
                      PRICE_LEADER, PRICE_INDIVIDUAL, PRICE_GOD, GOD_COUNT))
-        self.send_html(page("Escamo Hoodie Babies Trade", body, user))
+        self.send_html(page("Hoodie Babies Trade", body, user))
 
     def world(self, con, user):
         ensure_weekly_popups(con)
@@ -2102,7 +2102,7 @@ class Handler(BaseHTTPRequestHandler):
         gets a notice that they are available and where they were found —
         see the <a href='/notices'>Notices</a> board.</div>
         <p>These leaders are the founders of a new world.</p>""" + standings
-        self.send_html(page("The World of Escamo", body, user))
+        self.send_html(page("The World of Hoodie Babies", body, user))
 
     def notices(self, con, user):
         rows = con.execute(
@@ -3715,6 +3715,6 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     init_db()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
-    print("Escamo Hoodie Babies Trade running on http://%s:%d"
+    print("Hoodie Babies Trade running on http://%s:%d"
           % (HOST, PORT))
     server.serve_forever()

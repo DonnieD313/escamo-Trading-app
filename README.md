@@ -1,4 +1,4 @@
-# Escamo Hoodie Babies Trade — tradable app
+# Hoodie Babies Trade — tradable app
 
 A real multi-user trading app (not a demo page): people sign up, get a free
 hoodie baby, and trade babies and points with each other. Built with only the
