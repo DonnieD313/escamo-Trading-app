@@ -400,8 +400,10 @@ def main():
         # alice: 620 - 10 offered + 20 earned = 630
         check("alice points = 630", a["points"] == 630,
               "got %d" % a["points"])
-        # bob: 600 + 10 received + 20 earned = 630
-        check("bob points = 630", b["points"] == 630, "got %d" % b["points"])
+        # bob: 600 + 20 award only — the 10 offered points burn and
+        # are received by nobody
+        check("bob points = 620 (offered points burn)",
+              b["points"] == 620, "got %d" % b["points"])
         check("alice earned 40 (20 invite + 20 trade)",
               a["points_earned"] == 40)
         check("bob earned 20", b["points_earned"] == 20)
@@ -2296,7 +2298,8 @@ def main():
             check("shop offers no pay-with-points button",
                   "Buy with points" not in shop4
                   and "pay with points" not in shop4.lower())
-            # (b) Points DO move inside trade offers, exactly.
+            # (b) Trade points BURN: offered points leave the giver
+            # and reach nobody; each trader still gets the +20 award.
             giver = http.cookiejar.CookieJar()
             taker = http.cookiejar.CookieJar()
             s, _ = signup_full(giver, "giver", "secret9",
@@ -2338,12 +2341,13 @@ def main():
                 "SELECT * FROM users WHERE username='giver'").fetchone()
             t2 = pcon3.execute(
                 "SELECT * FROM users WHERE username='taker'").fetchone()
-            # giver: 600 - 75 offered + 20 award = 545; taker: 600 + 75
-            # received + 20 award = 695; each earned +20 (award kept).
+            # giver: 600 - 75 offered + 20 award = 545; taker: 600 +
+            # 20 award only — the 75 offered points burn, nobody
+            # receives them; each earned +20 (award kept).
             check("offered points leave the giver exactly",
                   g2["points"] == 545, "got %d" % g2["points"])
-            check("offered points arrive with the taker exactly",
-                  t2["points"] == 695, "got %d" % t2["points"])
+            check("offered points do NOT reach the taker (burned)",
+                  t2["points"] == 620, "got %d" % t2["points"])
             check("trade award still +20 earned each",
                   g2["points_earned"] == 20
                   and t2["points_earned"] == 20)
@@ -2382,9 +2386,272 @@ def main():
                 "SELECT * FROM users WHERE username='giver2'").fetchone()
             ta = pcon5.execute(
                 "SELECT * FROM users WHERE username='taker2'").fetchone()
-            check("points-only offer moves exactly 40 points",
-                  ga["points"] == 580 and ta["points"] == 660,
+            check("points-only offer burns the 40 points",
+                  ga["points"] == 580 and ta["points"] == 620,
                   "giver=%d taker=%d" % (ga["points"], ta["points"]))
+            # (b2) Counter-offer with points: the counter's points
+            # burn too — the counter offerer loses them, the receiver
+            # gains only the +20 award.
+            giver3 = http.cookiejar.CookieJar()
+            taker3 = http.cookiejar.CookieJar()
+            s, _ = signup_full(giver3, "giver3", "secret9",
+                               tribe="Browns", roster="Fern", base=pbase)
+            s, _ = signup_full(taker3, "taker3", "secret9",
+                               tribe="Reds", roster="Storm", base=pbase)
+            pcon6 = sqlite3.connect(pdb)
+            pcon6.row_factory = sqlite3.Row
+            g3r = pcon6.execute(
+                "SELECT * FROM users WHERE username='giver3'").fetchone()
+            t3r = pcon6.execute(
+                "SELECT * FROM users WHERE username='taker3'").fetchone()
+            g3baby = pcon6.execute(
+                "SELECT * FROM babies WHERE owner_id=?",
+                (g3r["id"],)).fetchone()
+            t3baby = pcon6.execute(
+                "SELECT * FROM babies WHERE owner_id=?",
+                (t3r["id"],)).fetchone()
+            s, _ = post(taker3, "/toggle_trade",
+                        {"baby_id": t3baby["id"]}, base=pbase)
+            s, _ = post(giver3, "/offer",
+                        {"wanted_baby_id": t3baby["id"],
+                         "offered_baby_id": g3baby["id"],
+                         "offered_points": "30"}, base=pbase)
+            off3 = pcon6.execute(
+                "SELECT * FROM offers WHERE from_user=? AND to_user=? "
+                "AND status='pending'",
+                (g3r["id"], t3r["id"])).fetchone()
+            check("counter test offer recorded", off3 is not None)
+            s, _ = post(taker3, "/offer_action",
+                        {"offer_id": off3["id"], "action": "counter",
+                         "counter_baby_id": t3baby["id"],
+                         "counter_points": "25"}, base=pbase)
+            pcon7 = sqlite3.connect(pdb)
+            pcon7.row_factory = sqlite3.Row
+            coff = pcon7.execute(
+                "SELECT * FROM offers WHERE from_user=? AND to_user=? "
+                "AND status='pending'",
+                (t3r["id"], g3r["id"])).fetchone()
+            check("counter-offer recorded with points",
+                  coff is not None and coff["offered_points"] == 25)
+            s, _ = post(giver3, "/offer_action",
+                        {"offer_id": coff["id"], "action": "accept"},
+                        base=pbase)
+            pcon8 = sqlite3.connect(pdb)
+            pcon8.row_factory = sqlite3.Row
+            g3 = pcon8.execute(
+                "SELECT * FROM users WHERE username='giver3'").fetchone()
+            t3 = pcon8.execute(
+                "SELECT * FROM users WHERE username='taker3'").fetchone()
+            # counter offerer (taker3): 600 - 25 + 20 = 595;
+            # counter receiver (giver3): 600 + 20 only; earned 20 each.
+            check("counter points burn for the counter offerer",
+                  t3["points"] == 595, "got %d" % t3["points"])
+            check("counter points do NOT reach the receiver",
+                  g3["points"] == 620, "got %d" % g3["points"])
+            check("counter trade awards +20 earned each",
+                  g3["points_earned"] == 20
+                  and t3["points_earned"] == 20)
+            pcon6.close()
+            pcon7.close()
+            pcon8.close()
+            # (c) A declined offer moves no points at all.
+            giver4 = http.cookiejar.CookieJar()
+            taker4 = http.cookiejar.CookieJar()
+            s, _ = signup_full(giver4, "giver4", "secret9",
+                               tribe="Browns", roster="Hazel", base=pbase)
+            s, _ = signup_full(taker4, "taker4", "secret9",
+                               tribe="Reds", roster="Skye", base=pbase)
+            pcon9 = sqlite3.connect(pdb)
+            pcon9.row_factory = sqlite3.Row
+            g4r = pcon9.execute(
+                "SELECT * FROM users WHERE username='giver4'").fetchone()
+            t4r = pcon9.execute(
+                "SELECT * FROM users WHERE username='taker4'").fetchone()
+            t4baby = pcon9.execute(
+                "SELECT * FROM babies WHERE owner_id=?",
+                (t4r["id"],)).fetchone()
+            g4baby = pcon9.execute(
+                "SELECT * FROM babies WHERE owner_id=?",
+                (g4r["id"],)).fetchone()
+            s, _ = post(taker4, "/toggle_trade",
+                        {"baby_id": t4baby["id"]}, base=pbase)
+            s, _ = post(giver4, "/offer",
+                        {"wanted_baby_id": t4baby["id"],
+                         "offered_baby_id": g4baby["id"],
+                         "offered_points": "50"}, base=pbase)
+            off4 = pcon9.execute(
+                "SELECT * FROM offers WHERE from_user=? AND to_user=? "
+                "AND status='pending'",
+                (g4r["id"], t4r["id"])).fetchone()
+            check("decline test offer recorded", off4 is not None)
+            s, _ = post(taker4, "/offer_action",
+                        {"offer_id": off4["id"], "action": "decline"},
+                        base=pbase)
+            pcon10 = sqlite3.connect(pdb)
+            pcon10.row_factory = sqlite3.Row
+            g4 = pcon10.execute(
+                "SELECT * FROM users WHERE username='giver4'").fetchone()
+            t4 = pcon10.execute(
+                "SELECT * FROM users WHERE username='taker4'").fetchone()
+            off4b = pcon10.execute(
+                "SELECT * FROM offers WHERE id=?",
+                (off4["id"],)).fetchone()
+            check("declined offer moves no points",
+                  g4["points"] == 600 and t4["points"] == 600
+                  and g4["points_earned"] == 0
+                  and t4["points_earned"] == 0
+                  and off4b["status"] == "declined",
+                  "giver=%d taker=%d" % (g4["points"], t4["points"]))
+            pcon9.close()
+            pcon10.close()
+            # (d-f) Points gifts: the only player-to-player points move.
+            s, gifts_html = get(giver4, "/gifts", base=pbase)
+            check("gifts page has a send form and explanation",
+                  "Send a points gift" in gifts_html
+                  and "only" in gifts_html
+                  and "does not receive" in gifts_html)
+            check("nav links to Gifts",
+                  "/gifts" in gifts_html)
+            gift1 = http.cookiejar.CookieJar()
+            gift2 = http.cookiejar.CookieJar()
+            s, _ = signup_full(gift1, "gift1", "secret9",
+                               tribe="Blues", roster="Pearl", base=pbase)
+            s, _ = signup_full(gift2, "gift2", "secret9",
+                               tribe="Browns", roster="Rowan", base=pbase)
+            pcong = sqlite3.connect(pdb)
+            pcong.row_factory = sqlite3.Row
+            gg1 = pcong.execute(
+                "SELECT * FROM users WHERE username='gift1'").fetchone()
+            gg2 = pcong.execute(
+                "SELECT * FROM users WHERE username='gift2'").fetchone()
+            s, _ = post(gift1, "/gift_send",
+                        {"to_username": "gift2", "points": "100"},
+                        base=pbase)
+            pg = pcong.execute(
+                "SELECT * FROM point_gifts WHERE from_user=? AND "
+                "to_user=? AND status='pending'",
+                (gg1["id"], gg2["id"])).fetchone()
+            check("gift sits pending after send", pg is not None
+                  and pg["points"] == 100)
+            s, me2_html = get(gift2, "/me", base=pbase)
+            check("recipient sees the pending gift on My Collection",
+                  "sent you" in me2_html and "100 points" in me2_html)
+            s, _ = post(gift2, "/gift_action",
+                        {"gift_id": pg["id"], "action": "accept"},
+                        base=pbase)
+            pcong2 = sqlite3.connect(pdb)
+            pcong2.row_factory = sqlite3.Row
+            a1 = pcong2.execute(
+                "SELECT * FROM users WHERE username='gift1'").fetchone()
+            a2 = pcong2.execute(
+                "SELECT * FROM users WHERE username='gift2'").fetchone()
+            pg2 = pcong2.execute(
+                "SELECT * FROM point_gifts WHERE id=?",
+                (pg["id"],)).fetchone()
+            # balance only: 500 / 700, earned unchanged at 0 both sides.
+            check("gift accept moves balance sender to receiver",
+                  a1["points"] == 500 and a2["points"] == 700
+                  and pg2["status"] == "accepted",
+                  "gift1=%d gift2=%d" % (a1["points"], a2["points"]))
+            check("gift accept never changes points earned",
+                  a1["points_earned"] == 0 and a2["points_earned"] == 0)
+            # (e) Decline and cancel move nothing.
+            s, _ = post(gift1, "/gift_send",
+                        {"to_username": "gift2", "points": "50"},
+                        base=pbase)
+            pgd = pcong2.execute(
+                "SELECT * FROM point_gifts WHERE from_user=? AND "
+                "to_user=? AND status='pending'",
+                (a1["id"], a2["id"])).fetchone()
+            check("second gift pending", pgd is not None)
+            s, _ = post(gift2, "/gift_action",
+                        {"gift_id": pgd["id"], "action": "decline"},
+                        base=pbase)
+            s, _ = post(gift1, "/gift_send",
+                        {"to_username": "gift2", "points": "30"},
+                        base=pbase)
+            pgc = pcong2.execute(
+                "SELECT * FROM point_gifts WHERE from_user=? AND "
+                "to_user=? AND status='pending'",
+                (a1["id"], a2["id"])).fetchone()
+            check("third gift pending", pgc is not None)
+            s, _ = post(gift1, "/gift_action",
+                        {"gift_id": pgc["id"], "action": "cancel"},
+                        base=pbase)
+            pcong3 = sqlite3.connect(pdb)
+            pcong3.row_factory = sqlite3.Row
+            b1 = pcong3.execute(
+                "SELECT * FROM users WHERE username='gift1'").fetchone()
+            b2 = pcong3.execute(
+                "SELECT * FROM users WHERE username='gift2'").fetchone()
+            pgd2 = pcong3.execute(
+                "SELECT * FROM point_gifts WHERE id=?",
+                (pgd["id"],)).fetchone()
+            pgc2 = pcong3.execute(
+                "SELECT * FROM point_gifts WHERE id=?",
+                (pgc["id"],)).fetchone()
+            check("gift decline and cancel move nothing",
+                  b1["points"] == 500 and b2["points"] == 700
+                  and pgd2["status"] == "declined"
+                  and pgc2["status"] == "cancelled",
+                  "gift1=%d gift2=%d" % (b1["points"], b2["points"]))
+            # (f) Gifts to self and over-balance gifts are refused.
+            def gift_count():
+                c = sqlite3.connect(pdb)
+                c.row_factory = sqlite3.Row
+                n = c.execute(
+                    "SELECT COUNT(*) FROM point_gifts WHERE from_user=?",
+                    (b1["id"],)).fetchone()[0]
+                c.close()
+                return n
+            before = gift_count()
+            s, resp_self = post(gift1, "/gift_send",
+                                {"to_username": "gift1", "points": "10"},
+                                base=pbase)
+            check("gift to self refused",
+                  gift_count() == before and "yourself" in resp_self)
+            s, resp_big = post(gift1, "/gift_send",
+                               {"to_username": "gift2", "points": "9999"},
+                               base=pbase)
+            check("gift over balance refused",
+                  gift_count() == before and "only have" in resp_big)
+            # Accept when the sender's balance has since dropped:
+            # fails, leaves the gift pending, moves nothing.
+            s, _ = post(gift1, "/gift_send",
+                        {"to_username": "gift2", "points": "100"},
+                        base=pbase)
+            pgl = sqlite3.connect(pdb)
+            pgl.row_factory = sqlite3.Row
+            pgl.execute("UPDATE users SET points=50 WHERE username="
+                        "'gift1'")
+            pgl.commit()
+            pglate = pgl.execute(
+                "SELECT * FROM point_gifts WHERE from_user=? AND "
+                "to_user=? AND status='pending'",
+                (b1["id"], b2["id"])).fetchone()
+            check("late gift pending before accept", pglate is not None)
+            s, resp_late = post(gift2, "/gift_action",
+                                {"gift_id": pglate["id"],
+                                 "action": "accept"}, base=pbase)
+            pgl2 = sqlite3.connect(pdb)
+            pgl2.row_factory = sqlite3.Row
+            c1 = pgl2.execute(
+                "SELECT * FROM users WHERE username='gift1'").fetchone()
+            c2 = pgl2.execute(
+                "SELECT * FROM users WHERE username='gift2'").fetchone()
+            pglate2 = pgl2.execute(
+                "SELECT * FROM point_gifts WHERE id=?",
+                (pglate["id"],)).fetchone()
+            check("gift accept with dropped balance fails, stays pending",
+                  "no longer holds" in resp_late
+                  and pglate2["status"] == "pending"
+                  and c1["points"] == 50 and c2["points"] == 700,
+                  "gift1=%d gift2=%d" % (c1["points"], c2["points"]))
+            pcong.close()
+            pcong2.close()
+            pcong3.close()
+            pgl.close()
+            pgl2.close()
             pcon.close()
             pcon2.close()
             pcon3.close()

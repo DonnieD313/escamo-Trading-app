@@ -492,6 +492,14 @@ def init_db():
         counter_of INTEGER REFERENCES offers(id),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS point_gifts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        from_user INTEGER NOT NULL REFERENCES users(id),
+        to_user INTEGER NOT NULL REFERENCES users(id),
+        points INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TABLE IF NOT EXISTS sessions (
         token TEXT PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id),
@@ -1182,6 +1190,7 @@ def page(title, body, user=None):
         nav = ("<nav><a href='/me'>My Collection</a> | "
                "<a href='/browse'>Trade Board</a> | "
                "<a href='/offers'>Offers</a> | "
+               "<a href='/gifts'>Gifts</a> | "
                "<a href='/shop'>Shop</a> | "
                "<a href='/purchases'>Purchases</a> | "
                "<a href='/world'>World</a> | "
@@ -1863,6 +1872,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.browse(con, user)
             elif path == "/offers":
                 self.offers(con, user)
+            elif path == "/gifts":
+                self.gifts(con, user, query)
             elif path == "/world":
                 self.world(con, user)
             elif path == "/notices":
@@ -1948,6 +1959,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.do_offer(con, user)
             elif path == "/offer_action":
                 self.do_offer_action(con, user)
+            elif path == "/gift_send":
+                self.do_gift_send(con, user)
+            elif path == "/gift_action":
+                self.do_gift_action(con, user)
             elif path == "/create_character":
                 self.do_create(con, user)
             else:
@@ -2513,6 +2528,35 @@ class Handler(BaseHTTPRequestHandler):
                  "someone can join and trade with you:<br>"
                  "<code>/signup?invite=%s</code></p>" % (
                      esc(user["invite_code"]), esc(user["invite_code"])))
+        # Pending points gifts for this player — gifts are the only
+        # way points move between players.
+        pending_gifts = con.execute(
+            "SELECT point_gifts.*, users.username AS sender FROM "
+            "point_gifts JOIN users ON users.id = point_gifts.from_user "
+            "WHERE to_user=? AND status='pending' ORDER BY id DESC",
+            (user["id"],)).fetchall()
+        if pending_gifts:
+            body += "<h2>Points gifts for you</h2>"
+            for g in pending_gifts:
+                body += ("<div class='card'><b>%s</b> sent you "
+                         "<b>%d points</b></div>"
+                         "<form method='post' action='/gift_action' "
+                         "style='display:inline'>"
+                         "<input type='hidden' name='gift_id' value='%d'>"
+                         "<input type='hidden' name='action' "
+                         "value='accept'><button>Accept gift</button>"
+                         "</form> "
+                         "<form method='post' action='/gift_action' "
+                         "style='display:inline'>"
+                         "<input type='hidden' name='gift_id' value='%d'>"
+                         "<input type='hidden' name='action' "
+                         "value='decline'><button>Decline gift</button>"
+                         "</form>"
+                         % (esc(g["sender"]), g["points"], g["id"],
+                            g["id"]))
+        body += ("<p><a href='/gifts'>Send or manage points gifts</a> — "
+                 "gifts are the only way points move between "
+                 "players.</p>")
         if query.get("msg"):
             body += "<p class='ok'>%s</p>" % esc(query["msg"][0])
         owned = user_owned_tribes(con, user["id"])
@@ -2572,7 +2616,10 @@ class Handler(BaseHTTPRequestHandler):
             Your baby (optional): <select name='offered_baby_id'>
             <option value=''>points only</option>%s</select><br>
             Points to offer: <input type='number' name='offered_points'
-            value='0' min='0'><br><button>Send offer</button></form>"""
+            value='0' min='0'><br>
+            <small>Points you offer are spent: they drop off when the
+            trade completes — the other player does not receive
+            them.</small><br><button>Send offer</button></form>"""
                      % (b["id"], opts))
         self.send_html(page("Trade Board", body, user))
 
@@ -2658,8 +2705,9 @@ class Handler(BaseHTTPRequestHandler):
                                  baby_img_html(ob, 72) if ob else "",
                                  baby_img_html(wb, 72) if wb else ""))
             text = ("<div class='card'>%sFrom <b>%s</b> to <b>%s</b> — "
-                    "offers %s + %d points for %s "
-                    "(status: %s)</div>" % (
+                    "offers %s + %d points (spent on completion — they "
+                    "drop off, the other player does not receive them) "
+                    "for %s (status: %s)</div>" % (
                         portraits,
                         esc(users.get(o["from_user"], "?")),
                         esc(users.get(o["to_user"], "?")),
@@ -2693,7 +2741,9 @@ class Handler(BaseHTTPRequestHandler):
                     <input type='hidden' name='action' value='counter'>
                     Counter with my baby:
                     <select name='counter_baby_id'>%s</select>
-                    + points: <input type='number' name='counter_points'
+                    + points (spent on completion — they drop off, the
+                    other player does not receive them):
+                    <input type='number' name='counter_points'
                     value='0' min='0'>
                     <button>Send counter</button></form>""" % (
                         o["id"], "".join(
@@ -2767,9 +2817,150 @@ class Handler(BaseHTTPRequestHandler):
                     con.commit()
         self.redirect("/offers")
 
+    # -- points gifts: the ONLY way points move between players --
+    def gifts(self, con, user, query, err=""):
+        if self.need_login(user):
+            return
+        user = con.execute("SELECT * FROM users WHERE id=?",
+                           (user["id"],)).fetchone()
+        users = {u["id"]: u["username"] for u in
+                 con.execute("SELECT id, username FROM users").fetchall()}
+        body = ("<p>Points gifts are the <b>only</b> way points move "
+                "from one player to another. Points you offer in a "
+                "trade are spent — they drop off when the trade "
+                "completes and the other player does not receive "
+                "them. A gift, on the other hand, moves points from "
+                "your balance to the other player's balance (balance "
+                "only — gifts never change points earned). The "
+                "recipient can accept or decline, and you can cancel "
+                "a gift while it is still pending.</p>"
+                "<p>Your points: <b>%d</b></p>" % user["points"])
+        if err:
+            body += "<p class='err'>%s</p>" % esc(err)
+        if query.get("msg"):
+            body += "<p class='ok'>%s</p>" % esc(query["msg"][0])
+        body += ("""<h2>Send a points gift</h2>
+        <form method='post' action='/gift_send'>
+        To (username): <input name='to_username' required><br>
+        Points: <input type='number' name='points' value='0' min='1'
+        required><br><button>Send gift</button></form>""")
+
+        def gift_block(g, incoming):
+            text = ("<div class='card'>%s points from <b>%s</b> to "
+                    "<b>%s</b> (status: %s)</div>" % (
+                        g["points"],
+                        esc(users.get(g["from_user"], "?")),
+                        esc(users.get(g["to_user"], "?")),
+                        esc(g["status"])))
+            if g["status"] == "pending" and incoming:
+                text += ("""<form method='post' action='/gift_action'
+                style='display:inline'>
+                <input type='hidden' name='gift_id' value='%d'>
+                <input type='hidden' name='action' value='accept'>
+                <button>Accept gift</button></form>
+                <form method='post' action='/gift_action'
+                style='display:inline'>
+                <input type='hidden' name='gift_id' value='%d'>
+                <input type='hidden' name='action' value='decline'>
+                <button>Decline gift</button></form>"""
+                         % (g["id"], g["id"]))
+            if g["status"] == "pending" and not incoming:
+                text += ("""<form method='post' action='/gift_action'>
+                <input type='hidden' name='gift_id' value='%d'>
+                <input type='hidden' name='action' value='cancel'>
+                <button>Cancel gift</button></form>""" % g["id"])
+            return text
+
+        incoming = con.execute(
+            "SELECT * FROM point_gifts WHERE to_user=? AND status="
+            "'pending' ORDER BY id DESC", (user["id"],)).fetchall()
+        outgoing = con.execute(
+            "SELECT * FROM point_gifts WHERE from_user=? AND status="
+            "'pending' ORDER BY id DESC", (user["id"],)).fetchall()
+        body += "<h2>Gifts for you (pending)</h2>"
+        body += "".join(gift_block(g, True) for g in incoming) \
+            or "<p>None.</p>"
+        body += "<h2>Gifts you sent (pending)</h2>"
+        body += "".join(gift_block(g, False) for g in outgoing) \
+            or "<p>None.</p>"
+        self.send_html(page("Points Gifts", body, user))
+
+    def do_gift_send(self, con, user):
+        if self.need_login(user):
+            return
+        f = self.form()
+        to_name = (f.get("to_username") or "").strip()
+        try:
+            pts = int(f.get("points") or 0)
+        except ValueError:
+            pts = 0
+        fresh = con.execute("SELECT * FROM users WHERE id=?",
+                            (user["id"],)).fetchone()
+        target = con.execute("SELECT * FROM users WHERE username=?",
+                             (to_name,)).fetchone() if to_name else None
+        err = ""
+        if not target:
+            err = "No player with that username."
+        elif target["id"] == user["id"]:
+            err = "You can't send a points gift to yourself."
+        elif pts <= 0:
+            err = "A gift must be at least 1 point."
+        elif pts > fresh["points"]:
+            err = ("You only have %d points." % fresh["points"])
+        if err:
+            self.gifts(con, user, {}, err=err)
+            return
+        con.execute(
+            "INSERT INTO point_gifts (from_user, to_user, points) "
+            "VALUES (?,?,?)", (user["id"], target["id"], pts))
+        con.commit()
+        self.redirect("/gifts?msg=Gift+sent!")
+
+    def do_gift_action(self, con, user):
+        if self.need_login(user):
+            return
+        f = self.form()
+        g = con.execute("SELECT * FROM point_gifts WHERE id=? "
+                        "AND status='pending'",
+                        (f.get("gift_id"),)).fetchone()
+        if not g:
+            self.redirect("/gifts")
+            return
+        action = f.get("action")
+        if action == "accept" and g["to_user"] == user["id"]:
+            sender = con.execute("SELECT * FROM users WHERE id=?",
+                                 (g["from_user"],)).fetchone()
+            if not sender or sender["points"] < g["points"]:
+                self.gifts(con, user, {},
+                           err="The sender no longer holds enough "
+                           "points — the gift is left pending.")
+                return
+            con.execute("UPDATE users SET points=points-? WHERE id=?",
+                        (g["points"], g["from_user"]))
+            con.execute("UPDATE users SET points=points+? WHERE id=?",
+                        (g["points"], g["to_user"]))
+            con.execute("UPDATE point_gifts SET status='accepted' "
+                        "WHERE id=?", (g["id"],))
+            con.commit()
+            self.redirect("/gifts?msg=Gift+accepted!")
+        elif action == "decline" and g["to_user"] == user["id"]:
+            con.execute("UPDATE point_gifts SET status='declined' "
+                        "WHERE id=?", (g["id"],))
+            con.commit()
+            self.redirect("/gifts")
+        elif action == "cancel" and g["from_user"] == user["id"]:
+            con.execute("UPDATE point_gifts SET status='cancelled' "
+                        "WHERE id=?", (g["id"],))
+            con.commit()
+            self.redirect("/gifts")
+        else:
+            self.redirect("/gifts")
+
     def accept_offer(self, con, o):
-        """Swap the babies, move points, award 20 points to each trader
-        (60 points to the buyer when the trade is for a Shadow)."""
+        """Swap the babies, burn offered points, award 20 points to each
+        trader (60 points to the buyer when the trade is for a Shadow).
+        Offered points are deducted from the offerer and NOBODY receives
+        them — they drop off. Points only move between players as gifts."""
         sender = con.execute("SELECT * FROM users WHERE id=?",
                              (o["from_user"],)).fetchone()
         receiver = con.execute("SELECT * FROM users WHERE id=?",
@@ -2795,9 +2986,12 @@ class Handler(BaseHTTPRequestHandler):
         if offered:
             con.execute("UPDATE babies SET owner_id=?, for_trade=0 "
                         "WHERE id=?", (o["to_user"], offered["id"]))
-        # points: offered points move sender -> receiver, plus 20 each.
-        # A trade for a Shadow is worth 60 points to the buyer instead
-        # of 20; the Underground system account earns nothing.
+        # points: offered points BURN — deducted from the offerer and
+        # received by nobody (they drop off). Spending points never
+        # touches points_earned. Each trader still gets the system
+        # award: 20 each, except a trade for a Shadow is worth 60
+        # points to the buyer instead of 20; the Underground system
+        # account earns nothing.
         is_black_trade = wanted["tribe"] == "Blacks"
         underground = con.execute(
             "SELECT id FROM users WHERE username='underground'").fetchone()
@@ -2810,10 +3004,10 @@ class Handler(BaseHTTPRequestHandler):
             % (buyer_bonus, buyer_bonus),
             (o["offered_points"], sender["id"]))
         con.execute(
-            "UPDATE users SET points=points+?+%d, points_earned="
+            "UPDATE users SET points=points+%d, points_earned="
             "points_earned+%d WHERE id=?"
             % (receiver_bonus, receiver_bonus),
-            (o["offered_points"], receiver["id"]))
+            (receiver["id"],))
         con.execute("UPDATE offers SET status='accepted' WHERE id=?",
                     (o["id"],))
         # withdraw other pending offers touching the traded babies

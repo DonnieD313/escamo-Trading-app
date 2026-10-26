@@ -50,10 +50,21 @@ Then open **http://127.0.0.1:8090** in a browser.
 - **Trading:** on the Trade Board you browse other users' babies marked for
   trade and send an offer — your baby and/or points for their baby. The other
   user can **accept, decline, or counter** (a counter sends a new offer back
-  with their own baby + points). Accepting swaps the babies, moves any
-  offered points, and awards **20 points to each trader**. Traded babies
-  leave the trade board, and other pending offers touching those babies are
-  withdrawn.
+  with their own baby + points). Accepting swaps the babies, **burns any
+  offered points** (they drop off — the other player does not receive
+  them; spending points reduces balance only, never points earned), and
+  awards **20 points to each trader**. Declining moves no points.
+  Traded babies leave the trade board, and other pending offers touching
+  those babies are withdrawn.
+- **Points gifts:** gifts are the **only** way points move between
+  players. From "Gifts" (also linked on "My Collection") you send a
+  points gift to another player by username — not yourself, a positive
+  amount you currently hold. The gift sits pending; the recipient can
+  accept or decline, and the sender can cancel it while pending.
+  Accepting re-checks the sender still holds enough points (if not, it
+  fails and stays pending), then deducts the sender's balance and
+  credits the receiver's balance only — gifts never change points
+  earned for either side. Declining or cancelling moves nothing.
 - **Points + creator:** points earned are tracked separately. At **every 300
   points earned**, you unlock adding your own custom character (name, tribe,
   hoodie pattern, rhinestone colors) from "My Collection".
@@ -226,7 +237,8 @@ gets the +20 invite bonus), each gets 1 free baby + 600 points, Bob puts
 his baby up for trade, Alice offers her baby + 10 points for it, Bob
 accepts — and afterward Alice owns Bob's old baby, Bob owns Alice's old
 baby, both babies leave the trade board, Alice has 630 points (600 + 20
-invite − 10 + 20), Bob has 630 (600 + 10 + 20), Alice has 40 points
+invite − 10 + 20), Bob has 620 (600 + 20 — the 10 offered points burn
+and reach nobody), Alice has 40 points
 earned and Bob 20, and the creator is still locked. It also verifies
 the new spec: the World page shows leader $10.00, individual $1.99, god
 $40.00, the 3 gods, five Waterliewaveminans characters, fish-like /
