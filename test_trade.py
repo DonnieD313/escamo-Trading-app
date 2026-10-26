@@ -2185,6 +2185,33 @@ def main():
                 s, html = get(nova, path, base=nbase)
                 check("no Blacks tribe name on %s" % path,
                       "Blacks" not in html)
+            # Share button in the nav on every page: phone share
+            # sheet when available, clipboard fallback with an inline
+            # notice otherwise. Shares the CURRENT page URL.
+            anon = http.cookiejar.CookieJar()
+            s, home = get(anon, "/", base=nbase)
+            check("share button on logged-out home page",
+                  "id='share-btn'" in home and ">Share</button>" in home)
+            check("share script has phone share-sheet branch",
+                  "navigator.share" in home)
+            check("share script has clipboard fallback branch",
+                  "navigator.clipboard" in home
+                  and "clipboard.writeText" in home)
+            check("share fallback shows Link copied notice",
+                  "Link copied" in home
+                  and "paste it anywhere!" in home
+                  and "id='share-notice'" in home)
+            check("share text names the platform and 600 points",
+                  "Escamo Hoodie Babies Trade" in home
+                  and "600 points" in home)
+            check("share uses the current page URL, not a hardcoded one",
+                  "window.location.href" in home)
+            s, shop5 = get(nova, "/shop", base=nbase)
+            check("share button on logged-in shop page",
+                  "id='share-btn'" in shop5)
+            s, me7 = get(nova, "/me", base=nbase)
+            check("share button on logged-in collection page",
+                  "id='share-btn'" in me7)
             ncon.close()
             ncon2.close()
         finally:

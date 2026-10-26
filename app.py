@@ -1171,6 +1171,13 @@ def esc(s):
 
 def page(title, body, user=None):
     nav = ""
+    share_btn = ("<button type='button' id='share-btn' "
+                 "onclick='sharePage()'>Share</button>")
+    # Empty <p> with zero margin: takes no space until the copy
+    # fallback writes text into it. (Deliberately NOT display:none:
+    # the footer-disclaimer checks assert no display:none on the page.)
+    share_notice = ("<p id='share-notice' "
+                    "style='margin:0;color:green'></p>")
     if user:
         nav = ("<nav><a href='/me'>My Collection</a> | "
                "<a href='/browse'>Trade Board</a> | "
@@ -1179,13 +1186,16 @@ def page(title, body, user=None):
                "<a href='/purchases'>Purchases</a> | "
                "<a href='/world'>World</a> | "
                "<a href='/notices'>Notices</a> | "
-               "<a href='/logout'>Log out (%s)</a></nav>" % esc(user["username"]))
+               "<a href='/logout'>Log out (%s)</a> | "
+               "%s</nav>%s" % (esc(user["username"]), share_btn,
+                               share_notice))
     else:
         nav = ("<nav><a href='/'>Home</a> | <a href='/login'>Log in</a> | "
                "<a href='/signup'>Sign up</a> | "
                "<a href='/shop'>Shop</a> | "
                "<a href='/world'>World</a> | "
-               "<a href='/notices'>Notices</a></nav>")
+               "<a href='/notices'>Notices</a> | "
+               "%s</nav>%s" % (share_btn, share_notice))
     return ("<!DOCTYPE html><html><head><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<title>%s</title><style>"
@@ -1201,8 +1211,34 @@ def page(title, body, user=None):
             "border-top:1px solid #ccc;font-size:13px;color:#444'>"
             "Note: the original Hoodie Babies figure will not be released "
             "until further notice — but actual, physical Hoodie Babies "
-            "are coming. Nothing is set in stone yet.</footer></body></html>"
-            % (esc(title), nav, esc(title), body))
+            "are coming. Nothing is set in stone yet.</footer>"
+            % (esc(title), nav, esc(title), body)
+            + share_script + "</body></html>")
+
+
+# Share button script: phone share sheet when available, clipboard
+# fallback with an inline notice otherwise. Shares the CURRENT page
+# URL on purpose — Home shares the join link, a baby detail page
+# shares that baby. No new dependencies.
+share_script = (
+    "<script>function sharePage(){"
+    "var n=document.getElementById('share-notice');"
+    "function msg(t){n.textContent=t;}"
+    "var d={title:'Escamo Hoodie Babies Trade',"
+    "text:'Join Escamo Hoodie Babies Trade — pick your tribe, "
+    "get your starter baby and 600 points, and start trading!',"
+    "url:window.location.href};"
+    "if(navigator.share){navigator.share(d).catch(function(){});}"
+    "else if(navigator.clipboard&&navigator.clipboard.writeText){"
+    "navigator.clipboard.writeText(window.location.href).then("
+    "function(){msg('Link copied — paste it anywhere!');});}"
+    "else{var t=document.createElement('textarea');"
+    "t.value=window.location.href;document.body.appendChild(t);"
+    "t.select();try{document.execCommand('copy');"
+    "msg('Link copied — paste it anywhere!');}"
+    "catch(e){msg('Copy this link: '+window.location.href);}"
+    "document.body.removeChild(t);}}"
+    "</script>")
 
 
 # ---------------------------------------------------------------- portraits
