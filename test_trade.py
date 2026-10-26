@@ -134,6 +134,61 @@ def signup_full(jar, username, password, tribe="Blues", roster=None,
 
 
 def main():
+    # Portrait unit checks (no server needed): the SVG engine renders
+    # from stored attributes only, with no image files or dependencies.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import app as escamo_app
+    blue = {"name": "Marina", "cert": "EHB-B001", "tribe": "Blues",
+            "hoodie_pattern": "Wave Crest",
+            "stones": "yellow + green rhinestones", "face": "fish-like"}
+    blue2 = dict(blue, cert="EHB-B002")
+    damiana = {"name": "Damiana June", "cert": "EHB-L001", "tribe": "Blues",
+               "hoodie_pattern": "Guiding Star",
+               "stones": "yellow + green rhinestones",
+               "face": "fish-like, surprised crying look"}
+    aaliyah = {"name": "Aaliyah Bee", "cert": "EHB-L002", "tribe": "Browns",
+               "hoodie_pattern": "Forest Canopy",
+               "stones": "amber + gold rhinestones, red stone in forehead",
+               "face": "animal-like, grouchy"}
+    jazmyn = {"name": "Jazmyn", "cert": "EHB-L003", "tribe": "Reds",
+              "hoodie_pattern": "All-black hoodie, diamond head, wand "
+              "with fire-red tip",
+              "stones": "stones of every different color on all-black "
+              "hoodie", "face": "angel-like, slight curious smile"}
+    black = {"name": "Onyx", "cert": "EHB-BLK-2026-W44", "tribe": "Blacks",
+             "hoodie_pattern": "Underground Veil",
+             "stones": "black stones on all-white hoodie",
+             "face": "angry creature-like"}
+    god1 = {"name": "Muzle Back", "cert": "EHB-G001", "tribe": "Gods",
+            "hoodie_pattern": "God Crown", "stones": "gold rhinestones",
+            "face": "grand"}
+    god2 = dict(god1, name="Baraka", cert="EHB-G002")
+    evil = dict(blue, name="<script>alert(1)</script>")
+    svg_blue = escamo_app.portrait_svg(blue)
+    check("portrait renders inline svg with cert",
+          "<svg" in svg_blue and "EHB-B001" in svg_blue)
+    check("portrait is deterministic",
+          escamo_app.portrait_svg(blue) == svg_blue)
+    check("same pattern, different cert gives different portrait",
+          escamo_app.portrait_svg(blue2) != svg_blue)
+    check("Damiana portrait has crying tears",
+          "#7CC4FF" in escamo_app.portrait_svg(damiana))
+    check("Aaliyah portrait has forehead stone",
+          "60,26 64,31 60,36 56,31" in escamo_app.portrait_svg(aaliyah))
+    svg_jazmyn = escamo_app.portrait_svg(jazmyn)
+    check("Jazmyn portrait has black hoodie and fire-red wand tip",
+          "#111111" in svg_jazmyn and "#FF3B1F" in svg_jazmyn)
+    check("Black portrait has diamond eyes",
+          "#DFF6FF" in escamo_app.portrait_svg(black))
+    svg_god1 = escamo_app.portrait_svg(god1)
+    svg_god2 = escamo_app.portrait_svg(god2)
+    check("god portraits have crowns and differ per god",
+          "42,30 48,19" in svg_god1 and svg_god1 != svg_god2)
+    svg_evil = escamo_app.portrait_svg(evil)
+    check("portrait escapes baby names",
+          "<script>" not in svg_evil and "&lt;script&gt;" in svg_evil)
+    check("small portrait size honored",
+          "width='72'" in escamo_app.portrait_svg(blue, 72))
     if os.path.exists(DB):
         os.remove(DB)
     env = dict(os.environ, PORT=str(PORT), ESCAMO_DB=DB)
@@ -177,6 +232,9 @@ def main():
             check("%s starts with 1 free baby" % name, len(babies) == 1,
                   "got %d" % len(babies))
             check("%s starts with 300 points" % name, row["points"] == 300)
+        s, me_html = get(alice, "/me")
+        check("collection page shows portraits",
+              "<svg" in me_html and alice_row["username"] in me_html)
         alice_baby = con.execute(
             "SELECT * FROM babies WHERE owner_id=?",
             (alice_row["id"],)).fetchone()
@@ -247,6 +305,7 @@ def main():
               "Diamond eyes" in world_html)
         # 9. Weekly Black listing + 1,200-point gate
         s, browse_html = get(alice, "/browse")
+        check("trade board shows portraits", "<svg" in browse_html)
         check("trade board shows weekly Black", "Blacks" in browse_html)
         check("trade board shows 1,200-point gate", "1,200" in browse_html)
         check("trade board says Underground auto-accepts",
@@ -365,6 +424,7 @@ def main():
             s, shop_html = get(carol, "/shop", base=mock_base)
             check("shop lists individual characters at $1.99",
                   "1.99" in shop_html)
+            check("shop shows portraits", "<svg" in shop_html)
             check("shop shows leader price $10.00", "10.00" in shop_html)
             check("shop shows god price $40.00", "40.00" in shop_html)
             check("shop shows leader choices for purchase",

@@ -752,10 +752,293 @@ def page(title, body, user=None):
             % (esc(title), nav, esc(title), body))
 
 
+# ---------------------------------------------------------------- portraits
+# Inline-SVG portraits, rendered server-side from each baby's stored
+# attributes (tribe, pattern, stones, cert). No image files and no new
+# dependencies, so the Render deploy needs no static-file handling. The
+# certificate seeds a small deterministic variation, so no two portraits
+# are identical even for babies sharing a pattern and stones. All text
+# that can come from a user (name, cert) is escaped; every color comes
+# from a fixed palette, never from user input.
+_STONE_COLORS = {
+    "yellow": "#FFD93B", "green": "#3DBA6B", "amber": "#E8A020",
+    "gold": "#FFC93B", "red": "#E53935", "black": "#222222",
+    "diamond": "#BFEFFF", "white": "#FFFFFF", "blue": "#2196F3",
+    "purple": "#9C27B0", "pink": "#FF7BAC", "orange": "#FF9800",
+    "teal": "#0E7C6B", "silver": "#C0C0C0",
+}
+_RAINBOW = ["#E53935", "#FF9800", "#FFD93B", "#3DBA6B", "#2196F3",
+            "#9C27B0"]
+_TRIBE_STYLE = {
+    "Blues": {"bg": "#DCEFFF", "hoodie": "#3B82C4", "face": "#A8E6D9",
+              "default_stones": ["#FFD93B", "#3DBA6B"]},
+    "Browns": {"bg": "#EFE6C8", "hoodie": "#7A5230", "face": "#EFC493",
+               "default_stones": ["#E8A020", "#FFC93B"]},
+    "Reds": {"bg": "#FFE3E0", "hoodie": "#D94F4F", "face": "#FFD9B8",
+             "default_stones": ["#E53935"]},
+    "Blacks": {"bg": "#3F3F46", "hoodie": "#FFFFFF", "face": "#A9BCA0",
+               "default_stones": ["#222222"]},
+    "Gods": {"bg": "#F3E8FF", "hoodie": "#5B2D8E", "face": "#FFE9B8",
+             "default_stones": ["#FFC93B"]},
+}
+_GOD_ACCENTS = {
+    "Muzle Back": "#7B2D8E", "Baraka": "#0E7C6B", "Sirus V": "#8E1F2F",
+}
+_LEADER_CERTS = {"EHB-L001": "Damiana June", "EHB-L002": "Aaliyah Bee",
+                 "EHB-L003": "Jazmyn"}
+
+
+def _bget(b, key, default=""):
+    try:
+        v = b[key]
+    except (KeyError, IndexError, TypeError):
+        return default
+    return default if v is None else v
+
+
+def _stone_colors(stones_text, tribe):
+    """Rhinestone colors for a baby: parsed from its stored stones text,
+    falling back to the tribe default. Blacks always get black stones
+    on their white hoodies; Jazmyn-style 'every different color' gets
+    the rainbow."""
+    if tribe == "Blacks":
+        return ["#222222"]
+    text = (stones_text or "").lower()
+    if "every different color" in text or "every color" in text:
+        return list(_RAINBOW)
+    found = []
+    for word, hexv in _STONE_COLORS.items():
+        if word in text and hexv not in found:
+            found.append(hexv)
+    if found:
+        return found
+    style = _TRIBE_STYLE.get(tribe, _TRIBE_STYLE["Blues"])
+    return list(style["default_stones"])
+
+
+def _motif(pattern, color, hoodie):
+    """Small chest emblem picked from the stored hoodie pattern, so
+    each 1-of-1 hoodie carries its own back design."""
+    import hashlib
+    kinds = ["star", "wave", "swirl", "diamond", "leaf", "flame", "moon",
+             "sun"]
+    kind = kinds[int(hashlib.md5((pattern or "").encode()).hexdigest()[:2],
+                     16) % len(kinds)]
+    if kind == "star":
+        return ("<polygon points='60,96 63,103 70,103 64,107 66,114 "
+                "60,110 54,114 56,107 50,103 57,103' fill='%s'/>" % color)
+    if kind == "wave":
+        return ("<path d='M48,107 q6,-7 12,0 t12,0' fill='none' "
+                "stroke='%s' stroke-width='2.5'/>" % color)
+    if kind == "swirl":
+        return ("<circle cx='60' cy='106' r='7' fill='none' stroke='%s' "
+                "stroke-width='2'/><circle cx='60' cy='106' r='2.5' "
+                "fill='%s'/>" % (color, color))
+    if kind == "diamond":
+        return ("<polygon points='60,97 68,106 60,115 52,106' "
+                "fill='%s'/>" % color)
+    if kind == "leaf":
+        return ("<path d='M60,96 Q70,106 60,116 Q50,106 60,96' "
+                "fill='%s'/>" % color)
+    if kind == "flame":
+        return ("<path d='M60,96 Q66,104 64,110 Q60,115 56,110 Q54,104 "
+                "60,96' fill='%s'/>" % color)
+    if kind == "moon":
+        return ("<circle cx='60' cy='106' r='8' fill='%s'/>"
+                "<circle cx='63' cy='103' r='7' fill='%s'/>"
+                % (color, hoodie))
+    return ("<circle cx='60' cy='106' r='5' fill='%s'/>"
+            "<path d='M60,94 v-4 M60,118 v-4 M48,106 h-4 M76,106 h-4' "
+            "stroke='%s' stroke-width='2'/>" % (color, color))
+
+
+def portrait_svg(b, size=120):
+    """Inline-SVG portrait for one baby (or shop item / leader / god).
+
+    b needs name, cert, tribe, hoodie_pattern, stones, face. Faces
+    follow Doneil's final specs: Blues fish-like, Browns animal-like,
+    Reds angel-like, Blacks angry creature-like, with the three
+    leaders' signature looks and grander crowned portraits for gods.
+    """
+    name = _bget(b, "name")
+    cert = _bget(b, "cert")
+    tribe = _bget(b, "tribe") or "Blues"
+    pattern = _bget(b, "hoodie_pattern")
+    stones_text = _bget(b, "stones")
+    style = _TRIBE_STYLE.get(tribe, _TRIBE_STYLE["Blues"])
+    bg, hoodie, face = style["bg"], style["hoodie"], style["face"]
+    is_damiana = cert == "EHB-L001" or name == "Damiana June"
+    is_aaliyah = cert == "EHB-L002" or name == "Aaliyah Bee"
+    is_jazmyn = cert == "EHB-L003" or name == "Jazmyn"
+    is_god = tribe == "Gods"
+    if is_jazmyn:
+        hoodie = "#111111"
+    accent = _GOD_ACCENTS.get(name, "#FFC93B") if is_god else None
+    if is_god:
+        hoodie = accent
+    stones = _stone_colors(stones_text, tribe)
+    if is_jazmyn:
+        stones = list(_RAINBOW)
+    # Deterministic per-baby variation, seeded by the unique certificate.
+    rnd = random.Random(cert or "X")
+    parts = []
+    parts.append("<svg class='portrait' width='%d' height='%d' "
+                 "viewBox='0 0 120 150' xmlns='http://www.w3.org/2000/svg' "
+                 "role='img' aria-label='%s'>"
+                 % (size, size * 150 // 120, esc(name)))
+    parts.append("<rect x='2' y='2' width='116' height='146' rx='12' "
+                 "fill='%s'/>" % bg)
+    # Faint background sparkles, placed per certificate.
+    for sx, sy in ((18, 22), (102, 30), (16, 128), (104, 126)):
+        if rnd.random() < 0.6:
+            parts.append("<circle cx='%d' cy='%d' r='2' fill='#FFFFFF' "
+                         "opacity='0.7'/>" % (sx + rnd.randint(-3, 3),
+                                              sy + rnd.randint(-3, 3)))
+    # Wings behind the body for angel-like Reds.
+    if tribe == "Reds" and not is_jazmyn:
+        parts.append("<ellipse cx='24' cy='98' rx='11' ry='20' fill='#FFFFFF' "
+                     "stroke='#DDDDDD' transform='rotate(-18 24 98)'/>")
+        parts.append("<ellipse cx='96' cy='98' rx='11' ry='20' fill='#FFFFFF' "
+                     "stroke='#DDDDDD' transform='rotate(18 96 98)'/>")
+    # Hoodie torso, then the hood ring behind the head.
+    parts.append("<rect x='30' y='72' width='60' height='60' rx='12' "
+                 "fill='%s' stroke='#00000022'/>" % hoodie)
+    parts.append("<circle cx='60' cy='56' r='30' fill='%s' "
+                 "stroke='#00000022'/>" % hoodie)
+    # Ears: fins for fish-like Blues, round ears for animal-like Browns.
+    if tribe == "Blues":
+        parts.append("<polygon points='37,48 25,41 30,57' fill='%s'/>" % hoodie)
+        parts.append("<polygon points='83,48 95,41 90,57' fill='%s'/>" % hoodie)
+    elif tribe == "Browns":
+        parts.append("<circle cx='40' cy='30' r='8' fill='%s'/>" % face)
+        parts.append("<circle cx='80' cy='30' r='8' fill='%s'/>" % face)
+        parts.append("<circle cx='40' cy='30' r='4' fill='#F2C9A0'/>")
+        parts.append("<circle cx='80' cy='30' r='4' fill='#F2C9A0'/>")
+    # God glow ring behind the head.
+    if is_god:
+        parts.append("<circle cx='60' cy='52' r='31' fill='none' "
+                     "stroke='%s' stroke-width='2' opacity='0.7'/>" % accent)
+    # Head: diamond-shaped and glowing for Jazmyn, round otherwise.
+    if is_jazmyn:
+        parts.append("<polygon points='60,28 82,52 60,76 38,52' "
+                     "fill='#EAF7FF' stroke='#7CC4FF' stroke-width='2'/>")
+        parts.append("<path d='M38,52 L60,28 L82,52' fill='none' "
+                     "stroke='#FFFFFF' stroke-width='1.5' opacity='0.8'/>")
+        # Hoodie over her face: only the head and eyes show.
+        parts.append("<path d='M30,56 Q30,26 60,26 Q90,26 90,56 L82,56 "
+                     "Q82,34 60,34 Q38,34 38,56 Z' fill='#111111'/>")
+    elif tribe == "Blues":
+        parts.append("<ellipse cx='60' cy='52' rx='25' ry='22' fill='%s'/>" % face)
+    else:
+        parts.append("<circle cx='60' cy='52' r='23' fill='%s'/>" % face)
+    # Face features.
+    if tribe == "Blacks":
+        # Angry creature-like: heavy angled brows, diamond eyes, grimace.
+        parts.append("<line x1='43' y1='40' x2='57' y2='45' stroke='#222222' "
+                     "stroke-width='3'/>")
+        parts.append("<line x1='77' y1='40' x2='63' y2='45' stroke='#222222' "
+                     "stroke-width='3'/>")
+        parts.append("<polygon points='51,44 55,40 59,44 55,50' fill='#DFF6FF' "
+                     "stroke='#333333'/>")
+        parts.append("<polygon points='69,44 73,40 77,44 73,50' fill='#DFF6FF' "
+                     "stroke='#333333'/>")
+        parts.append("<path d='M50,66 l4,-3 4,3 4,-3 4,3' fill='none' "
+                     "stroke='#333333' stroke-width='2'/>")
+    elif is_jazmyn:
+        # Black eyes only, on the glowing diamond head.
+        parts.append("<ellipse cx='51' cy='50' rx='4' ry='5' fill='#111111'/>")
+        parts.append("<ellipse cx='69' cy='50' rx='4' ry='5' fill='#111111'/>")
+        parts.append("<circle cx='52.5' cy='48.5' r='1.2' fill='#FFFFFF'/>")
+        parts.append("<circle cx='70.5' cy='48.5' r='1.2' fill='#FFFFFF'/>")
+    else:
+        if is_damiana:
+            # Surprised crying look, blue slanted eyes.
+            parts.append("<ellipse cx='51' cy='48' rx='6' ry='3.5' "
+                         "fill='#FFFFFF' transform='rotate(-20 51 48)'/>")
+            parts.append("<ellipse cx='69' cy='48' rx='6' ry='3.5' "
+                         "fill='#FFFFFF' transform='rotate(20 69 48)'/>")
+            parts.append("<circle cx='51' cy='48' r='2' fill='#1F4E79'/>")
+            parts.append("<circle cx='69' cy='48' r='2' fill='#1F4E79'/>")
+            parts.append("<path d='M45,56 q3,7 1,10 q-4,-2 -2,-8 Z' "
+                         "fill='#7CC4FF'/>")
+            parts.append("<path d='M75,56 q-3,7 -1,10 q4,-2 2,-8 Z' "
+                         "fill='#7CC4FF'/>")
+            parts.append("<ellipse cx='60' cy='64' rx='5' ry='6' "
+                         "fill='#8A4B3A'/>")
+        else:
+            parts.append("<circle cx='51' cy='48' r='5' fill='#FFFFFF'/>")
+            parts.append("<circle cx='69' cy='48' r='5' fill='#FFFFFF'/>")
+            parts.append("<circle cx='51' cy='48' r='2.5' fill='#222222'/>")
+            parts.append("<circle cx='69' cy='48' r='2.5' fill='#222222'/>")
+            if tribe == "Blues":
+                # Puckered fish lips.
+                parts.append("<ellipse cx='60' cy='64' rx='4' ry='5' "
+                             "fill='#D96A6A'/>")
+            elif tribe == "Browns":
+                # Grouchy: angled brows and a frown.
+                parts.append("<line x1='44' y1='41' x2='56' y2='45' "
+                             "stroke='#333333' stroke-width='2.5'/>")
+                parts.append("<line x1='76' y1='41' x2='64' y2='45' "
+                             "stroke='#333333' stroke-width='2.5'/>")
+                parts.append("<path d='M52,66 Q60,60 68,66' fill='none' "
+                             "stroke='#333333' stroke-width='2'/>")
+            elif tribe == "Reds":
+                # Slight curious smile, one brow raised.
+                parts.append("<path d='M54,64 Q61,68 67,63' fill='none' "
+                             "stroke='#333333' stroke-width='2'/>")
+                parts.append("<line x1='45' y1='39' x2='55' y2='37' "
+                             "stroke='#333333' stroke-width='2'/>")
+        if rnd.random() < 0.5:
+            parts.append("<circle cx='42' cy='60' r='3.5' fill='#FF9AA2' "
+                         "opacity='0.6'/>")
+            parts.append("<circle cx='78' cy='60' r='3.5' fill='#FF9AA2' "
+                         "opacity='0.6'/>")
+    # Aaliyah Bee: red stone in the middle of her forehead.
+    if is_aaliyah:
+        parts.append("<polygon points='60,26 64,31 60,36 56,31' "
+                     "fill='#E53935' stroke='#8E1F2F'/>")
+    # Halo for angel-like Reds (Jazmyn's hood covers hers).
+    if tribe == "Reds" and not is_jazmyn:
+        parts.append("<ellipse cx='60' cy='20' rx='15' ry='4.5' fill='none' "
+                     "stroke='#FFC93B' stroke-width='3'/>")
+    # Crown for gods; each god's accent makes it distinct.
+    if is_god:
+        parts.append("<polygon points='42,30 48,19 54,28 60,17 66,28 72,19 "
+                     "78,30 78,34 42,34' fill='%s' stroke='#8A6D00'/>"
+                     % accent)
+        parts.append("<circle cx='60' cy='27' r='2' fill='#FFFFFF'/>")
+    # Jazmyn's wand with a fire-red tip.
+    if is_jazmyn:
+        parts.append("<line x1='88' y1='114' x2='98' y2='72' stroke='#6B4423' "
+                     "stroke-width='3'/>")
+        parts.append("<circle cx='98' cy='69' r='6' fill='#FF3B1F'/>")
+        parts.append("<circle cx='98' cy='69' r='2.5' fill='#FF9800'/>")
+    # Rhinestones on the hoodie, placed per certificate.
+    slots = [(42, 94), (60, 90), (78, 94), (48, 114), (72, 114)]
+    rnd.shuffle(slots)
+    n_stones = rnd.choice([3, 4, 5])
+    for i, (sx, sy) in enumerate(slots[:n_stones]):
+        col = stones[i % len(stones)]
+        parts.append("<rect x='%d' y='%d' width='7' height='7' fill='%s' "
+                     "stroke='#00000033' transform='rotate(45 %d %d)'/>"
+                     % (sx - 3, sy - 3, col, sx, sy))
+    # The hoodie's own back design, from its stored pattern.
+    parts.append(_motif(pattern, "#FFFFFF" if hoodie != "#FFFFFF" else "#888888",
+                        hoodie))
+    # Certificate number under the portrait.
+    parts.append("<text x='60' y='145' text-anchor='middle' font-size='8.5' "
+                 "font-family='sans-serif' fill='#333333'>%s</text>"
+                 % esc(cert))
+    parts.append("</svg>")
+    return "".join(parts)
+
+
 def baby_card(b, owner_name=None, show_owner=False):
-    out = "<div class='card'><b>%s</b> <span class='tag'>%s</span> " \
-          "<span class='tag'>%s</span><br>" % (
-              esc(b["name"]), esc(b["cert"]), esc(b["tribe"]))
+    out = ("<div class='card'><div style='text-align:center'>%s</div>"
+           "<b>%s</b> <span class='tag'>%s</span> " \
+           "<span class='tag'>%s</span><br>" % (
+               portrait_svg(b), esc(b["name"]), esc(b["cert"]),
+               esc(b["tribe"])))
     out += "Hoodie: %s<br>Rhinestones: %s<br>Face: %s<br>" % (
         esc(b["hoodie_pattern"]), esc(b["stones"]), esc(b["face"]))
     if b["tribe"] == "Blacks":
@@ -1489,9 +1772,17 @@ class Handler(BaseHTTPRequestHandler):
         def offer_block(o, incoming):
             ob = mine.get(o["offered_baby"]) if o["offered_baby"] else None
             wb = mine.get(o["wanted_baby"])
-            text = ("<div class='card'>From <b>%s</b> to <b>%s</b> — "
+            portraits = ""
+            if ob is not None or wb is not None:
+                portraits = ("<div style='text-align:center'>%s"
+                             "<span style='font-size:20px'> &#8594; </span>"
+                             "%s</div>" % (
+                                 portrait_svg(ob, 72) if ob else "",
+                                 portrait_svg(wb, 72) if wb else ""))
+            text = ("<div class='card'>%sFrom <b>%s</b> to <b>%s</b> — "
                     "offers %s + %d points for %s "
                     "(status: %s)</div>" % (
+                        portraits,
                         esc(users.get(o["from_user"], "?")),
                         esc(users.get(o["to_user"], "?")),
                         ("%s (%s)" % (esc(ob["name"]), esc(ob["cert"])))
@@ -1715,11 +2006,13 @@ class Handler(BaseHTTPRequestHandler):
         if not items:
             body += "<p>No individual characters are for sale right now.</p>"
         for it in items:
-            body += ("<div class='card'><b>%s</b> "
+            body += ("<div class='card'><div style='text-align:center'>"
+                     "%s</div><b>%s</b> "
                      "<span class='tag'>%s</span> "
                      "<span class='tag'>%s</span><br>"
                      "Hoodie: %s<br>Rhinestones: %s<br>Face: %s<br>"
                      "Price: $%s</div>" % (
+                         portrait_svg(it),
                          esc(it["name"]), esc(it["cert"]), esc(it["tribe"]),
                          esc(it["hoodie_pattern"]), esc(it["stones"]),
                          esc(it["face"]), esc(it["price"])))
@@ -1745,11 +2038,13 @@ class Handler(BaseHTTPRequestHandler):
         leaders = con.execute(
             "SELECT * FROM leaders ORDER BY id").fetchall()
         for ld in leaders:
-            body += ("<div class='card'><b>%s</b> "
+            body += ("<div class='card'><div style='text-align:center'>"
+                     "%s</div><b>%s</b> "
                      "<span class='tag'>%s</span> "
                      "<span class='tag'>%s</span><br>"
                      "Hoodie: %s<br>Rhinestones: %s<br>Face: %s<br>"
                      "Price: $%s%s</div>" % (
+                         portrait_svg(ld),
                          esc(ld["name"]), esc(ld["cert"]),
                          esc(ld["tribe"]), esc(ld["hoodie_pattern"]),
                          esc(ld["stones"]), esc(ld["face"]),
@@ -1774,9 +2069,15 @@ class Handler(BaseHTTPRequestHandler):
                  "once.</p>" % (PRICE_GOD, GOD_COUNT))
         gods = con.execute("SELECT * FROM gods ORDER BY id").fetchall()
         for g in gods:
-            body += ("<div class='card'><b>%s</b> "
+            body += ("<div class='card'><div style='text-align:center'>"
+                     "%s</div><b>%s</b> "
                      "<span class='tag'>%s</span><br>"
                      "Price: $%s%s</div>" % (
+                         portrait_svg({"name": g["name"], "cert": g["cert"],
+                                       "tribe": "Gods",
+                                       "hoodie_pattern": "God Crown",
+                                       "stones": "gold rhinestones",
+                                       "face": "grand"}),
                          esc(g["name"]), esc(g["cert"]),
                          esc(g["price"]),
                          " — <b>SOLD</b>" if g["sold"] else ""))
