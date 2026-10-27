@@ -302,6 +302,29 @@ INVITE_BONUS = 20
 # Villages: a village is complete at 40 babies owned, not counting
 # leaders. Drifters, specials, rares, Shadows, and gods all count.
 VILLAGE_SIZE = 40
+
+# Second objective of the game, besides trading: players collect
+# coins in the Live World field and spend them to build their
+# village. Pieces are emoji markers shown on the village displays.
+BUILD_PIECES = {
+    "tree": ("\U0001f333", "Tree", 25),
+    "flowers": ("\U0001f338", "Flower bed", 15),
+    "cottage": ("\U0001f3e0", "Cottage", 100),
+    "fountain": ("\U000026f2", "Fountain", 150),
+    "lamp": ("\U0001f3ee", "Lamp", 40),
+}
+
+
+def village_pieces_str(con, user_id):
+    rows = con.execute(
+        "SELECT piece, COUNT(*) AS n FROM village_builds WHERE "
+        "user_id=? GROUP BY piece ORDER BY piece", (user_id,)).fetchall()
+    parts = []
+    for r in rows:
+        mark = BUILD_PIECES.get(r["piece"], ("", "", 0))[0]
+        if mark:
+            parts.append("%s \u00d7 %d" % (mark, r["n"]))
+    return " ".join(parts)
 # Pop-up tiers: the weekly drifter plus limited-edition specials and
 # rares, and the weekly Shadow pop-up (a money purchase in the Shop).
 PRICE_SPECIAL = "4.99"
@@ -844,6 +867,15 @@ def init_db():
     # within the last 5 minutes.
     if "last_seen" not in user_cols:
         con.execute("ALTER TABLE users ADD COLUMN last_seen TEXT")
+    if "coins" not in user_cols:
+        con.execute("ALTER TABLE users ADD COLUMN coins INTEGER NOT NULL DEFAULT 0")
+    con.execute("""
+    CREATE TABLE IF NOT EXISTS village_builds (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        piece TEXT NOT NULL,
+        bought_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )""")
     # Live World: where each player stands in the shared field, and
     # what they last said. Positions update by polling, not a live
     # socket — the page asks the server every 2 seconds.
@@ -888,6 +920,11 @@ def init_db():
                            ("🌼", 15, 45), ("⭐", 55, 75)):
             con.execute("INSERT INTO field_items (kind, x, y) "
                         "VALUES (?, ?, ?)", (kind, x, y))
+    if con.execute("SELECT COUNT(*) FROM field_items WHERE kind='\U0001fa99'").fetchone()[0] == 0:
+        for x, y in ((35, 30), (65, 60), (25, 55), (75, 35),
+                     (50, 80), (85, 65)):
+            con.execute("INSERT INTO field_items (kind, x, y) "
+                        "VALUES ('\U0001fa99', ?, ?)", (x, y))
     # Migration for the tribe renames: rewrite old tribe names in the
     # Notices board so no user-facing page still shows them.
     for old, new in (("Blacks", "Shadows"),
@@ -1859,34 +1896,50 @@ def user_tribe(con, user):
     return row["tribe"] if row else None
 
 
-def baby_card(b, owner_name=None, show_owner=False):
+def baby_card(b, owner_name=None, show_owner=False, flip=False):
     color = _bget(b, "color_theme") or _bget(b, "tribe")
     recolor_tag = (" <span class='tag'>recolored to %s colors</span>"
                    % esc(tribe_display(color))) \
         if _bget(b, "color_theme") and color != _bget(b, "tribe") else ""
-    out = ("<div class='card %s'><div style='text-align:center'>%s</div>"
-           "<b>%s</b> %s <span class='tag'>%s</span> " \
-           "<span class='tag'>%s</span>%s<br>" % (
-               theme_class(color),
-               baby_img_html(b), esc(b["name"]),
-               gender_marker(_bget(b, "gender", "")),
-               esc(b["cert"]), esc(tribe_display(b["tribe"])),
-               recolor_tag))
-    out += ("Hoodie: %s<br>Rhinestones: %s<br>Stones: %d<br>Face: %s<br>"
-            % (esc(b["hoodie_pattern"]), esc(b["stones"]),
-               stone_count(b["tribe"], _bget(b, "cert"),
-                           _bget(b, "name")), esc(b["face"])))
+    front = ("<div style='text-align:center'>%s</div>"
+             "<b>%s</b> %s <span class='tag'>%s</span> "
+             "<span class='tag'>%s</span>%s<br>" % (
+                 baby_img_html(b), esc(b["name"]),
+                 gender_marker(_bget(b, "gender", "")),
+                 esc(b["cert"]), esc(tribe_display(b["tribe"])),
+                 recolor_tag))
+    specs = ("Hoodie: %s<br>Rhinestones: %s<br>Stones: %d<br>Face: %s<br>"
+             % (esc(b["hoodie_pattern"]), esc(b["stones"]),
+                stone_count(b["tribe"], _bget(b, "cert"),
+                            _bget(b, "name")), esc(b["face"])))
     if b["tribe"] == "Blacks":
-        out += "Eyes: Diamond<br>"
+        specs += "Eyes: Diamond<br>"
     if b["is_custom"]:
-        out += "<span class='tag'>custom character</span> "
+        specs += "<span class='tag'>custom character</span> "
     if b["for_trade"]:
-        out += "<span class='tag'>for trade</span> "
+        specs += "<span class='tag'>for trade</span> "
     if show_owner and owner_name:
-        out += "<br>Owner: %s" % esc(owner_name)
-    out += ("<br><a href='/baby/%s'>View baby — zoom &amp; spin</a>"
+        specs += "<br>Owner: %s" % esc(owner_name)
+    link = ("<br><a href='/baby/%s'>View baby — zoom &amp; spin</a>"
             % esc(b["cert"]))
-    return out + "</div>"
+    if not flip:
+        return ("<div class='card %s'>%s%s%s</div>"
+                % (theme_class(color), front, specs, link))
+    inner_id = "flipinner%d" % b["id"]
+    back = ("<div style='text-align:left'><b>Back of jacket</b> "
+            "<span class='tag'>details card — not a photo</span><br>%s</div>"
+            % specs)
+    return ("<div class='card %s'><div style='perspective:600px'>"
+            "<div id='%s' style='position:relative;transition:transform .6s;"
+            "transform-style:preserve-3d'>"
+            "<div style='backface-visibility:hidden'>%s%s</div>"
+            "<div style='position:absolute;inset:0;backface-visibility:hidden;"
+            "transform:rotateY(180deg)'>%s</div></div></div>"
+            "<button onclick=\"var e=document.getElementById('%s');"
+            "e.style.transform=(e.style.transform=='rotateY(180deg)'?'':'rotateY(180deg)');"
+            "return false;\">\u21bb Turn around</button></div>"
+            % (theme_class(color), inner_id, front, link, back, inner_id))
+
 
 
 # ---------------------------------------------------------------- baby detail viewer
@@ -2299,6 +2352,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.do_play_wave(con, user)
             elif path == "/pickup":
                 self.do_pickup(con, user)
+            elif path == "/build_buy":
+                self.do_build_buy(con, user)
             elif path == "/recolor":
                 self.do_recolor(con, user)
             elif path == "/recruit":
@@ -2890,6 +2945,20 @@ class Handler(BaseHTTPRequestHandler):
         if vleader_names:
             body += ("<p>Village leader: %s</p>"
                      % esc(", ".join(vleader_names)))
+        coins = _bget(user, "coins", 0) or 0
+        body += ("<p>\U0001fa99 Village coins: <b>%d</b> — collect coins "
+                 "in the Live World field, then spend them to build your "
+                 "village below.</p>" % coins)
+        pieces = village_pieces_str(con, user["id"])
+        if pieces:
+            body += ("<p>Built in your village: %s</p>" % esc(pieces))
+        body += "<h2>Build your village</h2>"
+        for key, (mark, name, price) in BUILD_PIECES.items():
+            body += ("<form method='post' action='/build_buy' "
+                     "style='display:inline'>"
+                     "<input type='hidden' name='piece' value='%s'>"
+                     "<button>%s %s — %d coins</button></form> "
+                     % (key, mark, name, price))
         invites = con.execute(
             "SELECT COUNT(*) FROM users WHERE invited_by=?",
             (user["id"],)).fetchone()[0]
@@ -3010,7 +3079,7 @@ class Handler(BaseHTTPRequestHandler):
         if not rows:
             body += "<p>No babies are up for trade right now.</p>"
         for b in rows:
-            body += baby_card(b, b["owner"], show_owner=True)
+            body += baby_card(b, b["owner"], show_owner=True, flip=True)
             if b["tribe"] == "Blacks":
                 body += ("<p><b>Trading for a Shadow starts at 1,200 "
                          "points.</b></p>")
@@ -4556,6 +4625,9 @@ class Handler(BaseHTTPRequestHandler):
                      "<p><a href='/shelf/%s'>Visit %s's shelf</a></p>"
                      % (esc(p["username"]), vcount, tribe_line,
                         esc(p["username"]), esc(p["username"])))
+            _pieces = village_pieces_str(con, p["id"])
+            if _pieces:
+                body += ("<p>Built here: %s</p>" % esc(_pieces))
             for b in babies:
                 body += baby_card(b)
         self.send_html(page("Village", body, user))
@@ -4607,14 +4679,18 @@ class Handler(BaseHTTPRequestHandler):
                 more = ("<p><a href='/village'>+%d more babies in %s's "
                         "village</a></p>"
                         % (len(babies) - len(shown), esc(p["username"])))
+            _pieces = village_pieces_str(con, p["id"])
+            _pieces_line = (("<p>Built here: %s</p>" % esc(_pieces))
+                            if _pieces else "")
             plots += ("<div style='display:inline-block;vertical-align:"
                       "top;background:rgba(255,255,255,0.85);"
                       "border:2px solid #8fae6b;border-radius:14px;"
                       "padding:10px;margin:10px;max-width:420px'>"
-                      "<b>%s's village</b>%s — %s<br>%s%s"
+                      "<b>%s's village</b>%s — %s<br>%s%s%s"
                       "<p><a href='/shelf/%s'>Visit %s's shelf</a></p>"
                       "</div>"
                       % (esc(p["username"]), you, dot, figs, more,
+                         _pieces_line,
                          esc(p["username"]), esc(p["username"])))
         if not plots:
             plots = ("<p style='background:rgba(255,255,255,0.85);"
@@ -4753,14 +4829,41 @@ class Handler(BaseHTTPRequestHandler):
         it = best[1]
         con.execute("DELETE FROM field_items WHERE id=?",
                     (it["id"],))
-        con.execute("INSERT INTO carried_items (user_id, kind) "
-                    "VALUES (?, ?)", (user["id"], it["kind"]))
+        if it["kind"] == "\U0001fa99":
+            con.execute("UPDATE users SET coins = coins + 10 WHERE id=?",
+                        (user["id"],))
+        else:
+            con.execute("INSERT INTO carried_items (user_id, kind) "
+                        "VALUES (?, ?)", (user["id"], it["kind"]))
         nx = (it["id"] * 37 + 11) % 83 + 8
         ny = (it["id"] * 53 + 29) % 70 + 8
         con.execute("INSERT INTO field_items (kind, x, y) "
                     "VALUES (?, ?, ?)", (it["kind"], nx, ny))
         con.commit()
-        self.send_json({"ok": True, "kind": it["kind"]})
+        bal = con.execute("SELECT coins FROM users WHERE id=?",
+                          (user["id"],)).fetchone()[0]
+        self.send_json({"ok": True, "kind": it["kind"],
+                        "coins": bal or 0})
+
+    def do_build_buy(self, con, user):
+        if self.need_login(user):
+            return
+        piece = (self.form().get("piece") or "").strip()
+        if piece not in BUILD_PIECES:
+            self.redirect("/me?msg=Unknown+building.")
+            return
+        mark, name, price = BUILD_PIECES[piece]
+        bal = con.execute("SELECT coins FROM users WHERE id=?",
+                          (user["id"],)).fetchone()[0] or 0
+        if bal < price:
+            self.redirect("/me?msg=Not+enough+coins.")
+            return
+        con.execute("UPDATE users SET coins = coins - ? WHERE id=?",
+                    (price, user["id"]))
+        con.execute("INSERT INTO village_builds (user_id, piece) "
+                    "VALUES (?, ?)", (user["id"], piece))
+        con.commit()
+        self.redirect("/me?msg=%s+built!" % name.replace(" ", "+"))
 
     def play_state(self, con, user):
         msgs = con.execute(
@@ -4777,8 +4880,13 @@ class Handler(BaseHTTPRequestHandler):
             carried = [r["kind"] for r in con.execute(
                 "SELECT kind FROM carried_items WHERE user_id=? "
                 "ORDER BY id", (user["id"],)).fetchall()]
+        coins = 0
+        if user:
+            coins = con.execute("SELECT coins FROM users WHERE id=?",
+                                (user["id"],)).fetchone()[0] or 0
         self.send_json({
             "players": players,
+            "coins": coins,
             "items": [{"kind": it["kind"], "x": it["x"],
                       "y": it["y"]} for it in items],
             "carried": carried,
@@ -4864,6 +4972,8 @@ class Handler(BaseHTTPRequestHandler):
                 "<button onclick='pickup()' "
                 "style='padding:10px 18px;font-size:18px'>✋ Pick up"
                 "</button><span id='carried' "
+                "style='font-size:20px;align-self:center;color:#fdf6e3'"
+                "></span><span id='coinbal' "
                 "style='font-size:20px;align-self:center;color:#fdf6e3'"
                 "></span></div>"
                 "<form id='chatform' style='display:flex;gap:6px;"
@@ -5036,7 +5146,7 @@ class Handler(BaseHTTPRequestHandler):
                 "\"%;transform:translate(-50%,-50%);font-size:30px'>\""
                 "+it.kind+\"</div>\";}).join('');"
                 "var cd=document.getElementById('carried');"
-                "if(cd){cd.textContent='🎒 '+(st.carried||[]).join(' ');}"
+                "if(cd){cd.textContent='🎒 '+(st.carried||[]).join(' ');}var cb=document.getElementById('coinbal');if(cb&&st.coins!==undefined){cb.textContent='🪙 '+st.coins;}"
                 "document.getElementById('chatlog').innerHTML="
                 "st.messages.map(function(m){return '<b>'+esc("
                 "m.username)+':</b> '+esc(m.text);}).join('<br>');}"
@@ -5049,7 +5159,7 @@ class Handler(BaseHTTPRequestHandler):
                 "var f=new URLSearchParams();f.append('csrf_token',"
                 "CSRF);f.append('x',POS.x);f.append('y',POS.y);"
                 "fetch('/play_move',{method:'POST',body:f});poll();}"
-                "function pickup(){if(!ME){return;}var f=new URLSearchParams();f.append('csrf_token',CSRF);fetch('/pickup',{method:'POST',body:f}).then(function(r){return r.json();}).then(function(d){var m=document.getElementById('sysmsg');if(!d.ok){m.textContent='Nothing close enough to pick up — walk up to a flower, ball, or star.';}else{m.textContent='You picked up '+d.kind+'!';}poll();});}"
+                "function pickup(){if(!ME){return;}var f=new URLSearchParams();f.append('csrf_token',CSRF);fetch('/pickup',{method:'POST',body:f}).then(function(r){return r.json();}).then(function(d){var m=document.getElementById('sysmsg');if(!d.ok){m.textContent='Nothing close enough to pick up — walk up to a flower, ball, star, or coin.';}else if(d.kind=='\U0001fa99'){m.textContent='You found a coin! +10 coins (total '+d.coins+').';}else{m.textContent='You picked up '+d.kind+'!';}poll();});}"
                 "function wave(n){var f=new URLSearchParams();f.append('csrf_token',CSRF);f.append('target',n);fetch('/play_wave',{method:'POST',body:f}).then(function(){poll();});}"
                 "function talkTo(n){var inp=document.getElementById('chatin');if(inp){inp.value='@'+n+' ';inp.focus();}}"
                 "function pickSel(t){var pn=t?t.closest('[data-pname]'):null;var sp=document.getElementById('selpanel');if(!sp){return;}if(pn){var n=pn.getAttribute('data-pname');if(n===ME){sp.style.display='none';return;}sp.style.display='block';sp.innerHTML='<b>'+esc(n)+'</b> <button onclick=\"wave(\\''+n+'\\')\">👋 Wave</button> <button onclick=\"talkTo(\\''+n+'\\')\">💬 Talk</button> <a href=\"/shelf/'+encodeURIComponent(n)+'\">Visit shelf</a> <a href=\"/trading\">Trade</a>';}else{sp.style.display='none';}}"

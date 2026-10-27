@@ -1894,6 +1894,10 @@ def main():
             s, browse2_html = get(board_jar, "/browse")
             check("board Shadow listing uses the Black photo",
                   "/img/black-miner.jpg" in browse2_html)
+            check("board cards turn around to the back jacket",
+                  "Turn around" in browse2_html
+                  and "Back of jacket" in browse2_html
+                  and "flipinner" in browse2_html)
             mcon = sqlite3.connect(DB)
             mcon.row_factory = sqlite3.Row
             photo_row = mcon.execute(
@@ -3211,6 +3215,34 @@ def main():
                   s == 400 and "too_far" in farpick)
             s, anonpick = post(anon, "/pickup", {}, base=pbase)
             check("logged-out pickup is refused", s == 403)
+            check("live page shows a coin balance spot",
+                  "coinbal" in live_signed)
+            post(sh, "/play_move", {"x": "35", "y": "30"}, base=pbase)
+            s, coined = post(sh, "/pickup", {}, base=pbase)
+            check("pickup on a coin grows the coin balance",
+                  s == 200 and json.loads(coined).get("kind") == "🪙"
+                  and json.loads(coined).get("coins") == 10)
+            s, coin_state = get(sh, "/play_state", base=pbase)
+            check("play state reports the coin balance",
+                  json.loads(coin_state).get("coins") == 10
+                  and "🪙" not in json.loads(coin_state)["carried"])
+            post(sh, "/play_move", {"x": "65", "y": "60"}, base=pbase)
+            post(sh, "/pickup", {}, base=pbase)
+            s, poor = post(sh, "/build_buy", {"piece": "tree"},
+                           base=pbase)
+            check("building without enough coins is refused",
+                  "Not enough coins." in poor)
+            post(sh, "/play_move", {"x": "25", "y": "55"}, base=pbase)
+            post(sh, "/pickup", {}, base=pbase)
+            s, built = post(sh, "/build_buy", {"piece": "tree"},
+                            base=pbase)
+            check("building spends coins and shows in the village",
+                  "Village coins: <b>5</b>" in built
+                  and "Built in your village:" in built
+                  and "🌳" in built)
+            s, vpage = get(sh, "/village", base=pbase)
+            check("village showcase shows built pieces",
+                  "Built here:" in vpage and "🌳" in vpage)
             s, dstate = get(anon, "/play_state", base=pbase)
             dplayers = {p["username"]: p
                         for p in json.loads(dstate)["players"]}
