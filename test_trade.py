@@ -3126,9 +3126,10 @@ def main():
                   and "knocked out" in state2)
             pdb2.close()
             # (o) Tribe villages, touch-to-move, trading room.
-            check("live page has touch controls, walking legs and "
+            check("live page has touch controls, photo babies and "
                   "villages",
-                  "touchstart" in live and "leg leg-l" in live
+                  "touchstart" in live and "p.avatar" in live
+                  and "me-ava" in live
                   and "Fortress Rooted village" in live
                   and "zonelabel" in live)
             vjar = http.cookiejar.CookieJar()
@@ -3178,9 +3179,10 @@ def main():
             s, liveb = get(anon, "/live", base=pbase)
             check("live world carries the popup banner slot",
                   "popup-banner" in liveb)
-            # (q) Cartoon walkers, practice dummy battles.
-            check("live page builds cartoon walking babies",
-                  "walkerSVG" in liveb and "leg leg-l" in liveb)
+            # (q) Realistic photo babies, practice dummy battles.
+            check("live page uses photo babies, no stick figures",
+                  "walkerSVG" not in liveb and "p.avatar" in liveb
+                  and "me-ava" in liveb)
             s, dstate = get(anon, "/play_state", base=pbase)
             dplayers = {p["username"]: p
                         for p in json.loads(dstate)["players"]}

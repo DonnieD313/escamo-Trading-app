@@ -4726,7 +4726,7 @@ class Handler(BaseHTTPRequestHandler):
         drow = con.execute("SELECT hp FROM play_dummy WHERE id=1"
                            ).fetchone()
         out.append({"username": "Practice Dummy", "x": 50, "y": 45,
-                    "avatar": "", "tribe": "Dummy", "online": True,
+                    "avatar": "<div style='font-size:60px;line-height:1'>🎯</div>", "tribe": "Dummy", "online": True,
                     "bubble": "", "hp": drow["hp"] if drow else 100,
                     "you": False, "dummy": True})
         return out
@@ -4952,22 +4952,14 @@ class Handler(BaseHTTPRequestHandler):
                 "initial-scale=1'>"
                 "<title>Live World — Hoodie Babies</title>"
                 "<style>html,body{margin:0;padding:0;font-family:"
-                "'Comic Sans MS','Chalkboard SE','Comic Neue',cursive} body{display:flex;"
+                "system-ui,sans-serif} body{display:flex;"
                 "flex-direction:column;height:100vh;height:100dvh;"
                 "overflow:hidden} button{padding:10px 14px;"
                 "font-size:18px} a{color:#14532d} "
-                "@keyframes step{from{transform:rotate(-24deg)}"
-                "to{transform:rotate(24deg)}} "
-                ".walking .leg{transform-box:fill-box;"
-                "transform-origin:50% 0} "
-                ".walking .leg-l{animation:step .35s ease-in-out "
-                "infinite alternate} "
-                ".walking .leg-r{animation:step .35s ease-in-out "
-                "infinite alternate-reverse} "
+                ".walking{animation:bob .5s ease-in-out infinite alternate} "
+                ".idle{animation:bob 1.6s ease-in-out infinite alternate} "
                 "@keyframes bob{from{transform:translate(-50%,-50%)}"
                 "to{transform:translate(-50%,-54%)}} "
-                ".idle{animation:bob 1.6s ease-in-out infinite "
-                "alternate} "
                 "@keyframes shake{0%,100%{transform:translate(-50%,"
                 "-50%)}25%{transform:translate(-56%,-50%)}75%{"
                 "transform:translate(-44%,-50%)}} "
@@ -5019,7 +5011,6 @@ class Handler(BaseHTTPRequestHandler):
                 "var ME=" + json.dumps(me) + ";var POS=null;"
                 "function esc(s){return s.replace(/&/g,'&amp;')"
                 ".replace(/</g,'&lt;');}"
-                                "function walkerSVG(tribe){var c={Blues:['#2b5ea7','#ffd9b3'],Browns:['#7a4a21','#ffd9b3'],Reds:['#c0392b','#ffd9b3'],Dummy:['#888','#e0e0e0']}[tribe]||['#2b5ea7','#ffd9b3'];var hood=c[0],skin=c[1];return '<svg width=\"72\" height=\"86\" viewBox=\"0 0 100 120\">'+'<rect class=\"leg leg-l\" x=\"36\" y=\"88\" width=\"11\" height=\"24\" rx=\"5\" fill=\"#333\"/>'+'<rect class=\"leg leg-r\" x=\"53\" y=\"88\" width=\"11\" height=\"24\" rx=\"5\" fill=\"#333\"/>'+'<rect x=\"26\" y=\"48\" width=\"48\" height=\"46\" rx=\"14\" fill=\"'+hood+'\"/>'+'<circle cx=\"40\" cy=\"66\" r=\"3\" fill=\"white\"/><circle cx=\"50\" cy=\"70\" r=\"3\" fill=\"white\"/><circle cx=\"60\" cy=\"66\" r=\"3\" fill=\"white\"/>'+'<rect x=\"18\" y=\"54\" width=\"10\" height=\"26\" rx=\"5\" fill=\"'+hood+'\"/>'+'<rect x=\"72\" y=\"54\" width=\"10\" height=\"26\" rx=\"5\" fill=\"'+hood+'\"/>'+'<circle cx=\"50\" cy=\"30\" r=\"26\" fill=\"'+hood+'\"/>'+'<circle cx=\"50\" cy=\"32\" r=\"19\" fill=\"'+skin+'\"/>'+'<circle cx=\"43\" cy=\"30\" r=\"3\" fill=\"#222\"/><circle cx=\"57\" cy=\"30\" r=\"3\" fill=\"#222\"/>'+'<path d=\"M43 40 Q50 46 57 40\" stroke=\"#222\" fill=\"none\" stroke-width=\"2\"/></svg>';}"
 "function render(st){window._ST=st;var h='';"
                 "st.players.forEach(function(p,i){"
                 "if(p.you&&!POS){POS={x:p.x,y:p.y};}"
@@ -5036,11 +5027,11 @@ class Handler(BaseHTTPRequestHandler):
                 "var bub=p.bubble?\"<div style='background:white;"
                 "border-radius:10px;padding:4px 8px;font-size:13px;"
                 "max-width:160px'>\"+esc(p.bubble)+\"</div>\":'';"
-                "h+=\"<div class='\"+((moved?\"walking\":\"idle\")+(p.username===window._SHAKE?\" shaking\":\"\")+(p.username===window._LUNGE?\" lunging\":\"\"))+\"' "
+                'h+="<div "+(p.you?"id=\'me-ava\' ":"")+"class=\'"+((moved?"walking":"idle")+(p.username===window._SHAKE?" shaking":"")+(p.username===window._LUNGE?" lunging":""))+"\' '
                 "style='position:absolute;transition:left .6s linear,"
                 "top .6s linear;left:\"+p.x+\"%;"
                 "top:\"+p.y+\"%;transform:translate(-50%,-50%);"
-                "text-align:center'>\"+(p.username===window._BURST?\"<div style='font-size:28px'>💥</div>\":'')+bub+\"<div>\"+walkerSVG(p.tribe)+\"</div>"
+                "text-align:center'>\"+(p.username===window._BURST?\"<div style='font-size:28px'>💥</div>\":'')+bub+\"<div>\"+p.avatar+\"</div>"
                 "<div style='background:rgba(255,255,255,0.85);"
                 "border-radius:8px;padding:1px 6px;font-size:13px'>"
                 "\"+dot+\"<a href='/shelf/\"+encodeURIComponent("
@@ -5094,7 +5085,7 @@ class Handler(BaseHTTPRequestHandler):
                 "var r=fld.getBoundingClientRect();"
                 "POS.x=Math.max(0,Math.min(92,(cx-r.left)/r.width*100));"
                 "POS.y=Math.max(0,Math.min(85,(cy-r.top)/r.height*100));"
-                "lastTX=cx;lastTY=cy;var now=Date.now();"
+                "lastTX=cx;lastTY=cy;var now=Date.now();var me=document.getElementById('me-ava');if(me){me.style.left=POS.x+'%';me.style.top=POS.y+'%';}"
                 "if(!force&&now-lastGo<400){return;}lastGo=now;"
                 "var f=new URLSearchParams();f.append('csrf_token',"
                 "CSRF);f.append('x',POS.x);f.append('y',POS.y);"
@@ -5138,8 +5129,7 @@ class Handler(BaseHTTPRequestHandler):
         if user:
             mine = con.execute("SELECT * FROM babies WHERE owner_id=?",
                                (user["id"],)).fetchall()
-        body = ("<div style='font-family:\"Comic Sans MS\","
-                "\"Chalkboard SE\",\"Comic Neue\",cursive'>"
+        body = ("<div>"
                 "<p>Everyone who has babies up for trade right now, "
                 "lined up on the shelf. Scroll the shelf, tap a baby, "
                 "and make your offer below.</p>"
