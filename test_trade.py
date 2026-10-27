@@ -1554,6 +1554,26 @@ def main():
 
         # 16. Deals, monthly gift, choice babies, pop-ups, ownership,
         # gender (mocked PayPal server).
+        willow_row = {"id": 1, "name": "Willow", "cert": "EHB-BR001",
+                      "tribe": "Browns",
+                      "hoodie_pattern": "Forest Canopy",
+                      "stones": "green stones",
+                      "face": "animal-like, grouchy",
+                      "is_custom": 0, "for_trade": 1}
+        willow_card = escamo_app.baby_card(willow_row, flip=True)
+        check("card back shows illustrated back image when one exists",
+              "willow-back.jpg" in willow_card
+              and "Illustrated back" in willow_card)
+        wviews = escamo_app.baby_detail_views(willow_row)
+        check("detail viewer back is the illustrated image",
+              wviews[1][1] == "Back view — illustrated"
+              and "willow-back.jpg" in wviews[1][2])
+        kai_row = dict(willow_row, name="Kai", cert="EHB-BL005",
+                       tribe="Blues")
+        kviews = escamo_app.baby_detail_views(kai_row)
+        check("detail viewer without a back image keeps the details card",
+              kviews[1][1] == "Back view — details"
+              and "-back.jpg" not in kviews[1][2])
         check("deal price 25% off $1.99 is $1.49",
               escamo_app.deal_price("1.99", 0.25) == "1.49")
         check("deal price half off $1.99 is $1.00",
@@ -1956,6 +1976,9 @@ def main():
             check("board cards drag to turn",
                   "flipstage" in browse2_html
                   and "pointerdown" in browse2_html)
+            check("board cards spin a full 360 without snapping",
+                  "curAng" in browse2_html
+                  and "norm(base" in browse2_html)
             bcon = sqlite3.connect(DB)
             bcon.row_factory = sqlite3.Row
             board_id = bcon.execute(
@@ -1980,6 +2003,10 @@ def main():
                                   "offered_points": "0"})
             check("offering on your own baby is refused",
                   "not up for trade" in self_offer)
+            s, detail_html = get(board_jar, "/baby/%s" % own["cert"])
+            check("detail viewer spins a full 360",
+                  "spin-rotor" in detail_html
+                  and "preserve-3d" in detail_html)
             mcon = sqlite3.connect(DB)
             mcon.row_factory = sqlite3.Row
             photo_row = mcon.execute(
@@ -2282,9 +2309,9 @@ def main():
                   and "spin-next" in detail
                   and "Front view" in detail
                   and "Back view" in detail)
-            check("detail back view is honestly a details card, "
-                  "not a photo",
-                  "not a photo of the back yet" in detail)
+            check("detail back view is honestly labeled",
+                  "not a photo of the back yet" in detail
+                  or "Illustrated back" in detail)
             check("detail back view shows pattern, stones, tribe, "
                   "cert",
                   nbaby["hoodie_pattern"] in detail

@@ -1870,6 +1870,23 @@ def realistic_img_file(b):
     return REALISTIC_IMAGES.get(_bget(b, "name"))
 
 
+def back_img_file(b):
+    """Illustrated back-view filename for this baby, or None.
+
+    Backs are illustrated from the front photo (the founder approved
+    illustrated backs on 2026-10-27) and are always labeled as
+    illustrations, never passed off as photos. A baby with no back
+    image yet keeps the honestly labeled details card.
+    """
+    fname = realistic_img_file(b)
+    if not fname:
+        return None
+    back = fname[:-4] + "-back.jpg"
+    if os.path.exists(os.path.join(IMG_DIR, back)):
+        return back
+    return None
+
+
 def baby_img_html(b, size=120):
     """Photo <img> when a realistic photo exists, else SVG portrait.
 
@@ -1927,9 +1944,17 @@ def baby_card(b, owner_name=None, show_owner=False, flip=False):
         return ("<div class='card %s'>%s%s%s</div>"
                 % (theme_class(color), front, specs, link))
     inner_id = "flipinner%d" % b["id"]
-    back = ("<div style='text-align:left'><b>Back of jacket</b> "
-            "<span class='tag'>details card — not a photo</span><br>%s</div>"
-            % specs)
+    back_fname = back_img_file(b)
+    if back_fname:
+        back = ("<div style='text-align:center'>"
+                "<img src='/img/%s' style='max-width:100%%;"
+                "border-radius:12px'><br>"
+                "<span class='tag'>Illustrated back — not a photo"
+                "</span></div>" % back_fname)
+    else:
+        back = ("<div style='text-align:left'><b>Back of jacket</b> "
+                "<span class='tag'>details card — not a photo</span>"
+                "<br>%s</div>" % specs)
     return ("<div class='card %s'><div class='flipstage' data-inner='%s' style='perspective:600px;touch-action:none'>"
             "<div id='%s' style='position:relative;transition:transform .6s;"
             "transform-style:preserve-3d'>"
@@ -1993,25 +2018,35 @@ def baby_detail_views(b):
         "<span style='display:inline-block;width:18px;height:18px;"
         "border-radius:50%%;background:%s;border:1px solid #999;"
         "margin-right:4px'></span>" % c for c in stones)
-    back = (
-        "<div class='card'><h2>Back view — details card</h2>"
-        "<p>This is not a photo of the back yet — each baby has one "
-        "photo today. This card records the exact back-design specs, "
-        "so the 1-of-1 design is on record until side and back photos "
-        "are added here.</p>"
-        "<p>Hoodie pattern: <b>%s</b><br>"
-        "Rhinestones: %s<br>Stone colors: %s<br>"
-        "Stones on hoodie: <b>%d</b><br>"
-        "Tribe: <b>%s</b><br>Face: %s<br>"
-        "Certificate (1-of-1): <b>%s</b></p></div>" % (
-            esc(_bget(b, "hoodie_pattern")), esc(_bget(b, "stones")),
-            dots,
-            stone_count(_bget(b, "tribe"), _bget(b, "cert"),
-                        _bget(b, "name")),
-            esc(tribe_display(_bget(b, "tribe"))),
-            esc(_bget(b, "face")), esc(_bget(b, "cert"))))
+    back_fname = back_img_file(b)
+    if back_fname:
+        back = ("<div style='text-align:center'>"
+                "<img src='/img/%s' style='max-width:100%%;"
+                "border-radius:12px'><br>"
+                "<span class='tag'>Illustrated back — not a photo"
+                "</span></div>" % back_fname)
+        back_label = "Back view — illustrated"
+    else:
+        back = (
+            "<div class='card'><h2>Back view — details card</h2>"
+            "<p>This is not a photo of the back yet — each baby has one "
+            "photo today. This card records the exact back-design specs, "
+            "so the 1-of-1 design is on record until side and back photos "
+            "are added here.</p>"
+            "<p>Hoodie pattern: <b>%s</b><br>"
+            "Rhinestones: %s<br>Stone colors: %s<br>"
+            "Stones on hoodie: <b>%d</b><br>"
+            "Tribe: <b>%s</b><br>Face: %s<br>"
+            "Certificate (1-of-1): <b>%s</b></p></div>" % (
+                esc(_bget(b, "hoodie_pattern")), esc(_bget(b, "stones")),
+                dots,
+                stone_count(_bget(b, "tribe"), _bget(b, "cert"),
+                            _bget(b, "name")),
+                esc(tribe_display(_bget(b, "tribe"))),
+                esc(_bget(b, "face")), esc(_bget(b, "cert"))))
+        back_label = "Back view — details"
     return [("front", "Front view", front),
-            ("back", "Back view — details", back)]
+            ("back", back_label, back)]
 
 
 def popup_shop_section(con, cert, heading, user):
@@ -2878,9 +2913,14 @@ class Handler(BaseHTTPRequestHandler):
                                 user), 404)
             return
         views = baby_detail_views(b)
-        view_divs = "".join(
-            "<div class='spin-view' data-label='%s'>%s</div>"
-            % (esc(label), html) for _vid, label, html in views)
+        view_divs = (
+            "<div class='spin-view' data-label='%s' "
+            "style='backface-visibility:hidden'>%s</div>"
+            "<div class='spin-view' data-label='%s' "
+            "style='position:absolute;inset:0;transform:rotateY(180deg);"
+            "backface-visibility:hidden'>%s</div>"
+            % (esc(views[0][1]), views[0][2],
+               esc(views[1][1]), views[1][2]))
         dots = "".join(
             "<span class='spin-dot' data-i='%d' "
             "style='cursor:pointer'>●</span> " % i
@@ -2890,7 +2930,9 @@ class Handler(BaseHTTPRequestHandler):
             "<a href='/shop'>Shop</a> | "
             "<a href='/browse'>Trade Board</a></p>"
             "<div id='spin-stage' style='touch-action:pan-y;"
-            "text-align:center'>%s</div>"
+            "text-align:center;perspective:800px'>"
+            "<div id='spin-rotor' style='position:relative;"
+            "transform-style:preserve-3d'>%s</div></div>"
             "<p style='text-align:center'>"
             "<button id='spin-prev' type='button'>◀ Turn</button> "
             "<span id='spin-label'>%s</span> "
@@ -2929,26 +2971,27 @@ class Handler(BaseHTTPRequestHandler):
             "<script>(function(){"
             "var stage=document.getElementById('spin-stage');"
             "if(!stage) return;"
+            "var rotor=document.getElementById('spin-rotor');"
             "var views=stage.querySelectorAll('.spin-view');"
             "var label=document.getElementById('spin-label');"
             "var dots=document.querySelectorAll('.spin-dot');"
-            "var n=views.length, angle=0, startX=null, dragged=false;"
+            "var angle=0, startX=null, dragged=false;"
+            "function norm(a){ return ((a%360)+360)%360; }"
             "function show(){"
-            "var idx=((Math.floor(angle/(360/n))%n)+n)%n;"
-            "for(var i=0;i<n;i++){"
-            "views[i].style.display=(i===idx)?'block':'none';}"
+            "rotor.style.transform='rotateY('+angle+'deg)';"
+            "var back=norm(angle)>90&&norm(angle)<270;"
             "if(label) label.textContent="
-            "views[idx].getAttribute('data-label');"
+            "views[back?1:0].getAttribute('data-label');"
             "for(var j=0;j<dots.length;j++){"
-            "dots[j].style.opacity=(j===idx)?'1':'0.4';}}"
-            "function step(d){ angle+=d*(360/n); show(); }"
+            "dots[j].style.opacity=(j===(back?1:0))?'1':'0.4';}}"
+            "function step(d){ angle+=d*180; show(); }"
             "document.getElementById('spin-prev').onclick="
             "function(){ step(-1); };"
             "document.getElementById('spin-next').onclick="
             "function(){ step(1); };"
             "for(var k=0;k<dots.length;k++){"
             "(function(k){ dots[k].onclick=function(){"
-            "angle=k*(360/n); show(); }; })(k);}"
+            "angle=k*180; show(); }; })(k);}"
             "stage.addEventListener('pointerdown',"
             "function(e){ startX=e.clientX; dragged=false; });"
             "stage.addEventListener('pointermove',"
@@ -3165,13 +3208,15 @@ class Handler(BaseHTTPRequestHandler):
             trade completes — the other player does not receive
             them.</small><br><button>Send offer</button></form>"""
                      % (b["id"], opts))
-        body += """<script>
+        body += r"""<script>
         document.querySelectorAll('.flipstage').forEach(function(st){
         var inner=document.getElementById(st.dataset.inner);
         var startX=null,base=0,moved=0;
-        st.addEventListener('pointerdown',function(e){startX=e.clientX;base=(inner.style.transform=='rotateY(180deg)')?180:0;moved=0;inner.style.transition='none';});
-        st.addEventListener('pointermove',function(e){if(startX===null)return;var d=base+(e.clientX-startX)/2;if(d<0)d=0;if(d>180)d=180;inner.style.transform='rotateY('+d+'deg)';if(Math.abs(e.clientX-startX)>8)moved=1;});
-        function endTurn(){if(startX===null)return;startX=null;inner.style.transition='transform .6s';var cur=parseFloat(inner.style.transform.replace('rotateY(','').replace('deg)',''));inner.style.transform=(cur>90)?'rotateY(180deg)':'';}
+        function curAng(){var m=/rotateY\((-?[0-9.]+)deg\)/.exec(inner.style.transform);return m?parseFloat(m[1]):0;}
+        function norm(a){return ((a%360)+360)%360;}
+        st.addEventListener('pointerdown',function(e){startX=e.clientX;base=curAng();moved=0;inner.style.transition='none';});
+        st.addEventListener('pointermove',function(e){if(startX===null)return;var a=norm(base+(e.clientX-startX)*0.5);inner.style.transform='rotateY('+a+'deg)';if(Math.abs(e.clientX-startX)>8)moved=1;});
+        function endTurn(){if(startX===null)return;startX=null;inner.style.transition='transform .6s';}
         st.addEventListener('pointerup',endTurn);
         st.addEventListener('pointercancel',endTurn);
         st.addEventListener('click',function(e){if(moved){e.preventDefault();e.stopPropagation();}},{capture:true});
