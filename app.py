@@ -258,9 +258,9 @@ SHELF_STYLES = {
 
 # Display-only prices. Real-money purchases stay pending a payment
 # provider choice — nothing here charges anyone.
-PRICE_LEADER = "10.00"
-PRICE_INDIVIDUAL = "1.99"
-PRICE_GOD = "40.00"
+PRICE_LEADER = "5.00"
+PRICE_INDIVIDUAL = "1.00"
+PRICE_GOD = "20.00"
 GOD_COUNT = 3
 BLACK_TRADE_MIN_POINTS = 1200
 
@@ -291,7 +291,7 @@ GODS = [
 # Points packs: (points, price). Bought points add to balance only and
 # never count toward the character-creator unlock (trade-earned only).
 POINTS_PACKS = [
-    (300, "4.99"), (600, "9.99"), (1200, "20.00"),
+    (300, "2.50"), (600, "5.00"), (1200, "10.00"),
 ]
 # New signups start with 600 points (balance only — starting points
 # never count toward the character-creator unlock, same as bought
@@ -328,14 +328,14 @@ def village_pieces_str(con, user_id):
     return " ".join(parts)
 # Pop-up tiers: the weekly drifter plus limited-edition specials and
 # rares, and the weekly Shadow pop-up (a money purchase in the Shop).
-PRICE_SPECIAL = "4.99"
+PRICE_SPECIAL = "2.50"
 SPECIAL_EDITION = 25
-PRICE_RARE = "9.99"
+PRICE_RARE = "5.00"
 RARE_EDITION = 8
-PRICE_SHADOW = "10.00"
-# Points price of the weekly drifter freebie: a drifter costs $1.99 in
-# money, and points packs run about 60 points per $1, so 120 points.
-FREEBIE_POINTS = 120
+PRICE_SHADOW = "5.00"
+# Points price of the weekly drifter freebie: a drifter costs $1.00 in
+# money; the points freebie is halved from 120 to 60 points.
+FREEBIE_POINTS = 60
 POINTS_PACK_PRICES = {n: p for n, p in POINTS_PACKS}
 
 # ---------------------------------------------------------------- PayPal
@@ -529,7 +529,7 @@ def stripe_session_payment_status(session_id):
                         "/v1/checkout/sessions/%s" % session_id)
     return resp.get("payment_status", "")
 
-# Shop stock: individual characters for sale at $1.99. Names are distinct
+# Shop stock: individual characters for sale at $1.00. Names are distinct
 # from the starter pools so a shop baby never duplicates a starter name.
 SHOP_INDIVIDUALS = [
     ("Harbor", "Blues"), ("Lagoon", "Blues"), ("Reef", "Blues"),
@@ -599,7 +599,7 @@ def init_db():
         hoodie_pattern TEXT NOT NULL,
         stones TEXT NOT NULL,
         face TEXT NOT NULL,
-        price TEXT NOT NULL DEFAULT '1.99',
+        price TEXT NOT NULL DEFAULT '1.00',
         sold INTEGER NOT NULL DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -660,7 +660,7 @@ def init_db():
         hoodie_pattern TEXT NOT NULL,
         stones TEXT NOT NULL,
         face TEXT NOT NULL,
-        price TEXT NOT NULL DEFAULT '1.99',
+        price TEXT NOT NULL DEFAULT '1.00',
         sold INTEGER NOT NULL DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -672,7 +672,7 @@ def init_db():
         hoodie_pattern TEXT NOT NULL,
         stones TEXT NOT NULL,
         face TEXT NOT NULL,
-        price TEXT NOT NULL DEFAULT '10.00',
+        price TEXT NOT NULL DEFAULT '5.00',
         sold INTEGER NOT NULL DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -680,7 +680,7 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         cert TEXT UNIQUE NOT NULL,
         name TEXT NOT NULL,
-        price TEXT NOT NULL DEFAULT '40.00',
+        price TEXT NOT NULL DEFAULT '20.00',
         sold INTEGER NOT NULL DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -732,7 +732,7 @@ def init_db():
             " VALUES (?,?,?,?)",
             ("underground", hash_password(secrets.token_hex(32), salt),
              salt, new_invite_code(con)))
-    # Shop stock: individual characters for sale at $1.99, seeded once.
+    # Shop stock: individual characters for sale at $1.00, seeded once.
     if con.execute("SELECT COUNT(*) FROM shop_items").fetchone()[0] == 0:
         for i, (name, tribe) in enumerate(SHOP_INDIVIDUALS):
             pool = STARTERS[tribe]
@@ -806,6 +806,16 @@ def init_db():
                     "INTEGER DEFAULT 0")
     con.execute("UPDATE popup_items SET points_price=? WHERE tier="
                 "'drifter'", (FREEBIE_POINTS,))
+    # Price-halving (2026-10-27, Doneil's word): reprice every existing
+    # row to the new halved prices so live databases match the new
+    # constants above. Idempotent: rerunning changes nothing.
+    con.execute("UPDATE shop_items SET price='1.00'")
+    con.execute("UPDATE leaders SET price='5.00'")
+    con.execute("UPDATE gods SET price='20.00'")
+    con.execute("UPDATE popup_items SET price='1.00' WHERE tier='drifter'")
+    con.execute("UPDATE popup_items SET price='2.50' WHERE tier='special'")
+    con.execute("UPDATE popup_items SET price='5.00' WHERE tier='rare'")
+    con.execute("UPDATE popup_items SET price='5.00' WHERE tier='shadow'")
     con.execute("""
     CREATE TABLE IF NOT EXISTS points_listings (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1135,7 +1145,7 @@ def weekly_shadow_cert():
 
 
 def ensure_weekly_shadow(con):
-    """One Shadow pops up in the Shop each week as a $10.00 money
+    """One Shadow pops up in the Shop each week as a $5.00 money
     purchase (PayPal or Cash App Pay, like any shop buy). This replaces
     the old Underground points-offer listing on the Trade Board: player
     to player, Shadows still trade under the 1,200-point gate."""
@@ -1162,7 +1172,7 @@ def ensure_weekly_shadow(con):
 # deals pick 4 individual characters per ISO week (2 at 25% off, 2 at
 # half off); the monthly gift needs 1 completed purchase in the month;
 # a choice baby is earned every 5 completed shop purchases; pop-ups
-# are $1.99 like other individuals; gender is leaders female, Blacks
+# are $1.00 like other individuals; gender is leaders female, Blacks
 # and gods male, every other baby unmarked (no color inference).
 
 # Pop-up color variants: NEW pattern + rhinestone combinations on the
@@ -1229,7 +1239,7 @@ def current_iso_week():
 
 def deal_price(price_str, fraction_off):
     """Sale price for a discount fraction, rounded half-up to cents:
-    $1.99 at 25% off is $1.49, at half off is $1.00."""
+    $1.00 at 25% off is $0.75, at half off is $0.50."""
     price = Decimal(price_str) * (Decimal(1) - Decimal(str(fraction_off)))
     return format(price.quantize(Decimal("0.01"),
                                  rounding=ROUND_HALF_UP), "f")
@@ -1261,7 +1271,7 @@ def weekly_popup_cert():
 
 def ensure_weekly_popup(con):
     """One new color variant pops up in the Shop each week — the
-    regular pop-up, now called a drifter ($1.99) — plus a notice saying
+    regular pop-up, now called a drifter ($1.00) — plus a notice saying
     what popped up and where it was found. Only the current week's
     pop-up is listed for sale. The tribe rotation reads STARTERS, so a
     tribe added there later joins automatically."""
@@ -1303,8 +1313,8 @@ def weekly_rare_cert():
 
 def _ensure_weekly_tier_popup(con, cert, tier, price, edition, offset,
                               kind_word):
-    """One limited-edition pop-up release per week: a special ($4.99,
-    25 copies) or a rare ($9.99, 8 copies). Same rotation as drifters,
+    """One limited-edition pop-up release per week: a special ($2.50,
+    25 copies) or a rare ($5.00, 8 copies). Same rotation as drifters,
     offset so the tier's tribe and variant differ from the drifter's.
     Only the current week's release is listed; unsold copies stop being
     listed next week, like drifters."""
@@ -2482,8 +2492,8 @@ class Handler(BaseHTTPRequestHandler):
                  "each unique), individual characters $%s, gods $%s "
                  "(only %d gods, and their trades are almost impossible). "
                  "Everyone is free to purchase a leader. Points packs: "
-                 "300 for $4.99, 600 for $9.99, 1,200 for "
-                 "$20.00 — also in the Shop. Checkout runs in test mode "
+                 "300 for $2.50, 600 for $5.00, 1,200 for "
+                 "$10.00 — also in the Shop. Checkout runs in test mode "
                  "with PayPal or Cash App Pay — no real money moves.</p>"
                  "<p>Trade slots: at most 1 pending offer at once for a "
                  "regular trader, 2 for a leader owner, 5 for a god "
@@ -2554,13 +2564,13 @@ class Handler(BaseHTTPRequestHandler):
         carry Diamond eyes and all-white hoodies with black stones, and
         their faces are angry creature-like — mean or sneaky — every
         character's face different from the others. Once a week, one
-        Shadow pops up in the Shop for $10.00. Trading for a Shadow
+        Shadow pops up in the Shop for $5.00. Trading for a Shadow
         between players starts at 1,200 points.</div>
         <div class='card theme-underground'><b>The 3 Gods — over everyone</b><br>
         There are only 3 gods, and they are over everyone: they run the
         underworld, and they have power over the universe until new gods
         arrive. Pop-ups are underworld babies, kept by the gods for the
-        harm they can bring. Purchase: $40.00 each — buy one in the
+        harm they can bring. Purchase: $20.00 each — buy one in the
         <a href='/shop'>Shop</a> with PayPal or Cash App Pay (test mode,
         no real money moves). Their trades are almost impossible — but
         don't get discouraged: more gods will arrive over new tribes.</div>
@@ -2570,13 +2580,13 @@ class Handler(BaseHTTPRequestHandler):
         rares, and Shadows included. The colors stay the same; only the
         counts are fixed.</div>
         <div class='card'><b>Prices</b><br>
-        Leaders: $10.00 to purchase, and everyone is free to purchase a
+        Leaders: $5.00 to purchase, and everyone is free to purchase a
         leader — buy one in the <a href='/shop'>Shop</a>, choosing 1 of
         the 3 leaders (Snoot-Duie, Bea Bee, Me,Me Gal); each leader
         is unique, so once one is sold it is gone. Individual
-        characters: $1.99 to purchase — buy one in the
+        characters: $1.00 to purchase — buy one in the
         <a href='/shop'>Shop</a> with PayPal or Cash App Pay (test
-        mode, no real money moves). Gods: $40.00 to purchase — buy one
+        mode, no real money moves). Gods: $20.00 to purchase — buy one
         of the 3 god slots in the <a href='/shop'>Shop</a>.</div>
         <div class='card'><b>Trade slots</b><br>
         A regular trader can have at most 1 pending offer at once.
@@ -4298,7 +4308,7 @@ class Handler(BaseHTTPRequestHandler):
         return checkout_url
 
     def do_buy_leader(self, con, user):
-        """Start a $10.00 leader purchase via PayPal (buyer chooses 1
+        """Start a $5.00 leader purchase via PayPal (buyer chooses 1
         of the 3 leaders; each is unique)."""
         if self.need_login(user):
             return
@@ -4317,7 +4327,7 @@ class Handler(BaseHTTPRequestHandler):
             self.redirect(url)
 
     def do_buy_leader_stripe(self, con, user):
-        """Start a $10.00 leader purchase via Cash App Pay."""
+        """Start a $5.00 leader purchase via Cash App Pay."""
         if self.need_login(user):
             return
         f = self.form()
@@ -4330,13 +4340,13 @@ class Handler(BaseHTTPRequestHandler):
                                  "longer for sale.</p>", user))
             return
         url = self.begin_stripe_purchase(
-            con, user, "leader", ld["cert"], 1000, PRICE_LEADER,
+            con, user, "leader", ld["cert"], 500, PRICE_LEADER,
             "Leader %s (%s)" % (ld["name"], ld["cert"]))
         if url:
             self.redirect(url)
 
     def do_buy_god(self, con, user):
-        """Start a $40.00 god-slot purchase via PayPal."""
+        """Start a $20.00 god-slot purchase via PayPal."""
         if self.need_login(user):
             return
         f = self.form()
@@ -4354,7 +4364,7 @@ class Handler(BaseHTTPRequestHandler):
             self.redirect(url)
 
     def do_buy_god_stripe(self, con, user):
-        """Start a $40.00 god-slot purchase via Cash App Pay."""
+        """Start a $20.00 god-slot purchase via Cash App Pay."""
         if self.need_login(user):
             return
         f = self.form()
@@ -4367,7 +4377,7 @@ class Handler(BaseHTTPRequestHandler):
                                  "for sale.</p>", user))
             return
         url = self.begin_stripe_purchase(
-            con, user, "god", g["cert"], 4000, PRICE_GOD,
+            con, user, "god", g["cert"], 2000, PRICE_GOD,
             "God slot %s" % g["cert"])
         if url:
             self.redirect(url)

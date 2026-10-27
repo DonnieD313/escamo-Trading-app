@@ -117,9 +117,9 @@ Then open **http://127.0.0.1:8090** in a browser.
   footer: the original Hoodie Babies figure will not be released until
   further notice — but actual, physical Hoodie Babies are coming.
   Nothing is set in stone yet (no date is promised).
-- **Prices:** leaders **$10.00** to purchase, and everyone is free to
-  purchase a leader. Individual characters **$1.99** to purchase. Gods
-  **$40.00** to purchase — there are only 3 gods, over everyone, and
+- **Prices:** leaders **$5.00** to purchase, and everyone is free to
+  purchase a leader. Individual characters **$1.00** to purchase. Gods
+  **$20.00** to purchase — there are only 3 gods, over everyone, and
   their trades are almost impossible; more gods will arrive over new
   tribes.
 - **Trade slots:** at most **1 pending offer at once** for a regular
@@ -128,9 +128,9 @@ Then open **http://127.0.0.1:8090** in a browser.
   your leader or god and the cap drops back. Enforced when an offer
   (or counter-offer) is sent, with a message naming the cap.
 - **Shop + checkout (PayPal and Cash App Pay, test modes):** the Shop
-  page sells individual characters for **$1.99** each, leaders for
-  **$10.00** each, god slots for **$40.00** each, and points packs
-  (**300 for $4.99, 600 for $9.99, 1,200 for $20.00** — no 900 pack)
+  page sells individual characters for **$1.00** each, leaders for
+  **$5.00** each, god slots for **$20.00** each, and points packs
+  (**300 for $2.50, 600 for $5.00, 1,200 for $10.00** — no 900 pack)
   through PayPal or through Cash App Pay (via Stripe Checkout). A
   logged-in user buys, pays, and is sent back — only a successful
   capture (PayPal) or a verified paid session (Stripe) grants the
@@ -147,7 +147,7 @@ Then open **http://127.0.0.1:8090** in a browser.
   never raise points_earned, so bought points do not unlock the
   character creator, which stays trade-earned only.
 - **Shadows / weekly pop-up + player trades:** once a week, one Shadow
-  pops up in the Shop as a **$10.00** money purchase (PayPal or Cash App
+  pops up in the Shop as a **$5.00** money purchase (PayPal or Cash App
   Pay, like any shop buy). This replaces the old Underground points-offer
   listing on the Trade Board. Trading for a Shadow **between players**
   still starts at **1,200 points**: an offer targeting a Shadow is
@@ -170,8 +170,8 @@ Then open **http://127.0.0.1:8090** in a browser.
   unsold individual characters is discounted — alternating 25% off and
   half off (50%). The pick is seeded by the week number, so it is stable
   all week and changes next week. Deal items are sold only from the shelf,
-  showing the original price struck through plus the sale price ($1.99 at
-  25% off is $1.49, at half off is $1.00); the regular list skips them.
+  showing the original price struck through plus the sale price ($1.00 at
+  25% off is $0.75, at half off is $0.50); the regular list skips them.
   Buying from the shelf charges the sale price through the normal
   PayPal/Stripe flow. Discounts apply to individual characters only —
   never points packs, leaders, or gods.
@@ -193,12 +193,12 @@ Then open **http://127.0.0.1:8090** in a browser.
   a sold-out listing disappears. No new tribe names were invented: the
   rotation reads the starter-tribe data, so a tribe added there later
   joins the rotation automatically.
-  - **Drifter** — the regular weekly pop-up, **$1.99**, one copy.
-  - **Special** — **$4.99**, a limited edition of **25** copies
+  - **Drifter** — the regular weekly pop-up, **$1.00**, one copy.
+  - **Special** — **$2.50**, a limited edition of **25** copies
     (Doneil said 20 to 30 found; 25 is the midpoint default).
-  - **Rare** — **$9.99**, a limited edition of **8** copies
+  - **Rare** — **$5.00**, a limited edition of **8** copies
     (Doneil said 5 to 10 found; 8 is inside the range).
-  - **Shadow** — **$10.00**, one copy (see "Shadows" above).
+  - **Shadow** — **$5.00**, one copy (see "Shadows" above).
   Every pop-up baby counts toward its owner's village.
 - **Tribe ownership:** buying a tribe's leader makes the buyer the Owner
   of that tribe — Snoot-Duie owns the Blues, Bea Bee owns the
@@ -233,7 +233,7 @@ Then open **http://127.0.0.1:8090** in a browser.
   shelf; the 1-purchase monthly-gift threshold; choice babies counting
   all completed shop purchases (including points packs); the special
   edition size (25) and rare edition size (8); the village size (40
-  non-leader babies); the Shadow pop-up price ($10.00).
+  non-leader babies); the Shadow pop-up price ($5.00).
 
 ## Test: two users completing a trade end-to-end
 
@@ -252,8 +252,8 @@ baby, both babies leave the trade board, Alice has 630 points (600 + 20
 invite − 10 + 20), Bob has 620 (600 + 20 — the 10 offered points burn
 and reach nobody), Alice has 40 points
 earned and Bob 20, and the creator is still locked. It also verifies
-the new spec: the World page shows leader $10.00, individual $1.99, god
-$40.00, the 3 gods, five Waterliewaveminans characters, fish-like /
+the new spec: the World page shows leader $5.00, individual $1.00, god
+$20.00, the 3 gods, five Waterliewaveminans characters, fish-like /
 animal-like / angel-like faces, and Shadows as the protectors with
 Diamond eyes; a player-listed Shadow on the Trade Board carries the
 1,200-point gate; a Shadow offer below 1,200 points is refused with no
@@ -262,20 +262,20 @@ accepted, gives the buyer the Shadow plus 60 points, and a second offer
 against the same Shadow fails cleanly; no user-facing page still shows
 "Blacks" as a tribe name; and the Notices board lists arrivals. It then
 runs two mocked PayPal shop servers (no real credentials, no network
-calls to PayPal): a successful capture grants the listed $1.99 baby and
+calls to PayPal): a successful capture grants the listed $1.00 baby and
 records the purchase as completed, and a failed capture grants nothing
 and leaves the shop item unsold. Finally it runs two mocked Stripe shop
 servers (no real keys, no network calls to Stripe): a paid Cash App Pay
-session grants the listed $1.99 baby and records the purchase as
+session grants the listed $1.00 baby and records the purchase as
 completed, while an unpaid session and a cancelled session each grant
 nothing and leave the shop item unsold. It then verifies the leader/god/
-points rules on mocked servers: a $10.00 leader purchase (buyer's choice
+points rules on mocked servers: a $5.00 leader purchase (buyer's choice
 of the 3 leaders) grants the leader baby and marks it sold, a sold-out
 leader cannot be bought by anyone else, a failed leader capture grants
-nothing; a $40.00 god purchase grants a god slot baby; the trade-slot
+nothing; a $20.00 god purchase grants a god slot baby; the trade-slot
 caps hold (regular 1, leader owner 2, god owner 5 pending offers, with
 the cap dropping when the leader is traded away); and points packs
-(300 for $4.99 via PayPal, 600 for $9.99 and 1,200 for $20.00 via Cash App
+(300 for $2.50 via PayPal, 600 for $5.00 and 1,200 for $10.00 via Cash App
 Pay) raise the balance only, never points_earned, so the creator stays
 locked — while failed/unpaid packs grant nothing and the removed 900
 pack is refused. Finally it verifies hardening on dedicated instances:

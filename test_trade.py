@@ -231,10 +231,10 @@ def main():
     check("three leaders with new names and tribes",
           leaders == {"Blues": "Snoot-Duie", "Browns": "Bea Bee",
                       "Reds": "Me,Me Gal"})
-    check("leader prices unchanged at $10.00",
-          escamo_app.PRICE_LEADER == "10.00"
-          and escamo_app.PRICE_INDIVIDUAL == "1.99"
-          and escamo_app.PRICE_GOD == "40.00")
+    check("leader prices unchanged at $5.00",
+          escamo_app.PRICE_LEADER == "5.00"
+          and escamo_app.PRICE_INDIVIDUAL == "1.00"
+          and escamo_app.PRICE_GOD == "20.00")
     check("leader photos renamed, old files gone from mapping",
           escamo_app.REALISTIC_IMAGES.get("Snoot-Duie") == "snoot-duie.jpg"
           and escamo_app.REALISTIC_IMAGES.get("Bea Bee") == "bea-bee.jpg"
@@ -476,9 +476,9 @@ def main():
         check("offer status accepted", o["status"] == "accepted")
         # 8. World page: pricing, gods, five Blues, new faces
         s, world_html = get(alice, "/world")
-        check("world shows leader price $10.00", "10.00" in world_html)
-        check("world shows individual price $1.99", "1.99" in world_html)
-        check("world shows god price $40.00", "40.00" in world_html)
+        check("world shows leader price $5.00", "5.00" in world_html)
+        check("world shows individual price $1.00", "1.00" in world_html)
+        check("world shows god price $20.00", "20.00" in world_html)
         check("world shows the 3 gods", "3 Gods" in world_html)
         check("world shows five Blues characters",
               "five characters" in world_html)
@@ -492,7 +492,7 @@ def main():
         check("world shows no Blacks tribe name",
               "Blacks" not in world_html)
         # 9. Player-listed Shadow + 1,200-point gate (the weekly Shadow
-        # is now a $10.00 Shop pop-up, not a Trade Board listing).
+        # is now a $5.00 Shop pop-up, not a Trade Board listing).
         seller = http.cookiejar.CookieJar()
         s, _ = signup_full(seller, "seller", "secret2",
                            tribe="Reds", roster="Storm")
@@ -622,12 +622,12 @@ def main():
                                base=mock_base)
             check("carol signs up on mock shop server", s in (200, 302))
             s, shop_html = get(carol, "/shop", base=mock_base)
-            check("shop lists individual characters at $1.99",
-                  "1.99" in shop_html)
+            check("shop lists individual characters at $1.00",
+                  "1.00" in shop_html)
             check("shop shows pictures",
                   "<svg" in shop_html or "/img/" in shop_html)
-            check("shop shows leader price $10.00", "10.00" in shop_html)
-            check("shop shows god price $40.00", "40.00" in shop_html)
+            check("shop shows leader price $5.00", "5.00" in shop_html)
+            check("shop shows god price $20.00", "20.00" in shop_html)
             check("shop shows leader choices for purchase",
                   "Snoot-Duie" in shop_html
                   and "Bea Bee" in shop_html
@@ -696,9 +696,9 @@ def main():
             pur = mcon2.execute(
                 "SELECT * FROM purchases WHERE user_id=?",
                 (carol_row["id"],)).fetchone()
-            check("purchase recorded as completed at $1.99",
+            check("purchase recorded as completed at $1.00",
                   pur is not None and pur["status"] == "completed"
-                  and pur["amount"] == "1.99"
+                  and pur["amount"] == "1.00"
                   and pur["item_type"] == "individual")
             baby = mcon2.execute(
                 "SELECT * FROM babies WHERE cert=?",
@@ -788,7 +788,7 @@ def main():
                 "'leader'", (dave_row["id"],)).fetchone()
             check("failed leader purchase recorded as failed",
                   lpur is not None and lpur["status"] == "failed"
-                  and lpur["amount"] == "10.00")
+                  and lpur["amount"] == "5.00")
             lsold = fcon3.execute(
                 "SELECT * FROM leaders WHERE id=?",
                 (ld["id"],)).fetchone()
@@ -815,7 +815,7 @@ def main():
                 "'points'", (dave_row["id"],)).fetchone()
             check("failed points purchase recorded as failed",
                   ppur is not None and ppur["status"] == "failed"
-                  and ppur["amount"] == "9.99")
+                  and ppur["amount"] == "5.00")
             drow = fcon4.execute(
                 "SELECT * FROM users WHERE username='dave'").fetchone()
             check("failed points pack adds no points",
@@ -877,9 +877,9 @@ def main():
             pur = scon2.execute(
                 "SELECT * FROM purchases WHERE user_id=?",
                 (erin_row["id"],)).fetchone()
-            check("stripe purchase recorded as completed at $1.99",
+            check("stripe purchase recorded as completed at $1.00",
                   pur is not None and pur["status"] == "completed"
-                  and pur["amount"] == "1.99"
+                  and pur["amount"] == "1.00"
                   and pur["item_type"] == "individual"
                   and pur["stripe_session_id"] is not None)
             baby = scon2.execute(
@@ -984,7 +984,7 @@ def main():
                 (item2["id"],)).fetchone()
             check("cancelled purchase leaves shop item unsold",
                   sold2["sold"] == 0)
-            # Unpaid points pack grants no points (300 pack, $4.99).
+            # Unpaid points pack grants no points (300 pack, $2.50).
             s, hdrs, _ = post_noredirect(
                 frank, "/buy_points_stripe", {"pack": "300"},
                 base=unpaid_base)
@@ -1001,7 +1001,7 @@ def main():
                 "'points'", (frank_row["id"],)).fetchone()
             check("unpaid points purchase recorded as failed",
                   ppur is not None and ppur["status"] == "failed"
-                  and ppur["amount"] == "4.99")
+                  and ppur["amount"] == "2.50")
             frow = ucon4.execute(
                 "SELECT * FROM users WHERE username='frank'").fetchone()
             check("unpaid points pack adds no points",
@@ -1115,9 +1115,9 @@ def main():
                 "SELECT * FROM purchases WHERE item_type='leader' AND "
                 "user_id=(SELECT id FROM users WHERE username='u1')"
                 ).fetchone()
-            check("leader purchase recorded at $10.00",
+            check("leader purchase recorded at $5.00",
                   lpur is not None and lpur["status"] == "completed"
-                  and lpur["amount"] == "10.00")
+                  and lpur["amount"] == "5.00")
             u1_row = ccon.execute(
                 "SELECT * FROM users WHERE username='u1'").fetchone()
             lbaby = ccon.execute(
@@ -1193,9 +1193,9 @@ def main():
                 "SELECT * FROM purchases WHERE item_type='god' AND "
                 "user_id=(SELECT id FROM users WHERE username='u1')"
                 ).fetchone()
-            check("god purchase recorded at $40.00",
+            check("god purchase recorded at $20.00",
                   gpur is not None and gpur["status"] == "completed"
-                  and gpur["amount"] == "40.00")
+                  and gpur["amount"] == "20.00")
             u1_row = ccon.execute(
                 "SELECT * FROM users WHERE username='u1'").fetchone()
             gbaby = ccon.execute(
@@ -1253,9 +1253,9 @@ def main():
             ppur = pcon.execute(
                 "SELECT * FROM purchases WHERE user_id=? AND item_type="
                 "'points'", (w1_row["id"],)).fetchone()
-            check("points purchase recorded at $9.99",
+            check("points purchase recorded at $5.00",
                   ppur is not None and ppur["status"] == "completed"
-                  and ppur["amount"] == "9.99")
+                  and ppur["amount"] == "5.00")
             pcon.close()
             # 1,200 points via Cash App Pay.
             s, hdrs, _ = post_noredirect(
@@ -1586,10 +1586,10 @@ def main():
             missing_backs.append("black-miner-back.jpg")
         check("every photographed baby has an illustrated back",
               not missing_backs, str(missing_backs))
-        check("deal price 25% off $1.99 is $1.49",
-              escamo_app.deal_price("1.99", 0.25) == "1.49")
-        check("deal price half off $1.99 is $1.00",
-              escamo_app.deal_price("1.99", 0.50) == "1.00")
+        check("deal price 25% off $1.00 is $0.75",
+              escamo_app.deal_price("1.00", 0.25) == "0.75")
+        check("deal price half off $1.00 is $0.50",
+              escamo_app.deal_price("1.00", 0.50) == "0.50")
         mem = sqlite3.connect(":memory:")
         mem.row_factory = sqlite3.Row
         mem.execute("CREATE TABLE shop_items (id INTEGER PRIMARY KEY,"
@@ -1660,7 +1660,7 @@ def main():
             check("shop shows deals shelf",
                   "Deals of the week" in shop_html)
             check("shop shows struck-through deal price",
-                  "<s>$1.99</s>" in shop_html)
+                  "<s>$1.00</s>" in shop_html)
             check("shop shows pop-up color section",
                   "Drifter pop-up" in shop_html)
             popup_idx = shop_html.find("Drifter pop-up")
@@ -1722,7 +1722,7 @@ def main():
                 "SELECT * FROM purchases WHERE user_id=? ORDER BY id "
                 "DESC", (dana_row["id"],)).fetchone()
             check("deal flag on non-deal item charges full price",
-                  pur is not None and pur["amount"] == "1.99",
+                  pur is not None and pur["amount"] == "1.00",
                   "amount=%s" % (pur["amount"] if pur else None))
             # Monthly gift now available, once only.
             s, _ = post(dana, "/claim_gift", {}, base=bbase)
@@ -1802,9 +1802,9 @@ def main():
                 "SELECT * FROM purchases WHERE user_id=? AND "
                 "item_type='popup' ORDER BY id DESC",
                 (dana_row["id"],)).fetchone()
-            check("pop-up purchase recorded at $1.99",
+            check("pop-up purchase recorded at $1.00",
                   ppur is not None and ppur["status"] == "completed"
-                  and ppur["amount"] == "1.99")
+                  and ppur["amount"] == "1.00")
             pbaby = bcon.execute(
                 "SELECT * FROM babies WHERE cert=?",
                 (popup["cert"],)).fetchone()
@@ -2125,24 +2125,24 @@ def main():
                   "font-size:13px" in shop2
                   and "display:none" not in shop2)
             check("shop shows new points packs",
-                  "300 points" in shop2 and "4.99" in shop2
-                  and "600 points" in shop2 and "9.99" in shop2
-                  and "1200 points" in shop2 and "20.00" in shop2)
+                  "300 points" in shop2 and "2.50" in shop2
+                  and "600 points" in shop2 and "5.00" in shop2
+                  and "1200 points" in shop2 and "10.00" in shop2)
             check("shop shows no 900 pack",
                   "900 points" not in shop2)
-            check("shop shows drifter $1.99",
+            check("shop shows drifter $1.00",
                   "Drifter pop-up" in shop2)
-            check("shop shows special $4.99, 25 of 25 left",
+            check("shop shows special $2.50, 25 of 25 left",
                   "Special pop-up" in shop2
                   and "Only 25 of 25 left" in shop2)
-            check("shop shows rare $9.99, 8 of 8 left",
+            check("shop shows rare $5.00, 8 of 8 left",
                   "Rare pop-up" in shop2
                   and "Only 8 of 8 left" in shop2)
-            check("shop shows Shadow pop-up $10.00",
-                  "Shadow pop-up" in shop2 and "$10.00" in shop2)
+            check("shop shows Shadow pop-up $5.00",
+                  "Shadow pop-up" in shop2 and "$5.00" in shop2)
             check("shop shows no Blacks tribe name",
                   "Blacks" not in shop2)
-            # Drifter buy (PayPal) at $1.99.
+            # Drifter buy (PayPal) at $1.00.
             d = ncon.execute(
                 "SELECT * FROM popup_items WHERE tier='drifter' AND "
                 "stock>0 ORDER BY id").fetchone()
@@ -2154,8 +2154,8 @@ def main():
                 "SELECT * FROM purchases WHERE user_id=? AND item_type="
                 "'popup' ORDER BY id DESC",
                 (nova_row["id"],)).fetchone()
-            check("drifter purchase recorded at $1.99",
-                  dpur is not None and dpur["amount"] == "1.99"
+            check("drifter purchase recorded at $1.00",
+                  dpur is not None and dpur["amount"] == "1.00"
                   and dpur["status"] == "completed")
             # Special buys: two copies, certs suffixed, stock drops.
             sp = ncon.execute(
@@ -2188,7 +2188,7 @@ def main():
                 (sp["id"],)).fetchone()
             check("special stock drops to 23", sp_row["stock"] == 23,
                   "got %s" % sp_row["stock"])
-            # Rare buy (Stripe) at $9.99, stock 8 -> 7.
+            # Rare buy (Stripe) at $5.00, stock 8 -> 7.
             ra = ncon.execute(
                 "SELECT * FROM popup_items WHERE tier='rare' AND "
                 "stock>0 ORDER BY id").fetchone()
@@ -2202,7 +2202,7 @@ def main():
                 (ra["id"],)).fetchone()
             check("rare stock drops to 7", ra_row["stock"] == 7,
                   "got %s" % ra_row["stock"])
-            # Shadow buy (PayPal) at $10.00.
+            # Shadow buy (PayPal) at $5.00.
             sh = ncon.execute(
                 "SELECT * FROM popup_items WHERE tier='shadow' AND "
                 "stock>0 ORDER BY id").fetchone()
@@ -2212,9 +2212,9 @@ def main():
                   "Payment complete" in ret_html)
             shpur = ncon.execute(
                 "SELECT * FROM purchases WHERE user_id=? AND item_type="
-                "'popup' AND amount='10.00' ORDER BY id DESC",
+                "'popup' AND amount='5.00' ORDER BY id DESC",
                 (nova_row["id"],)).fetchone()
-            check("Shadow purchase recorded at $10.00",
+            check("Shadow purchase recorded at $5.00",
                   shpur is not None and shpur["status"] == "completed")
             shbaby = ncon.execute(
                 "SELECT * FROM babies WHERE cert=?",
@@ -2512,7 +2512,7 @@ def main():
                   "the points freebie only",
                   actions <= allowed, "actions=%s" % sorted(actions))
             check("shop offers pay-with-points only on the freebie",
-                  "Buy with 120 points" in shop4
+                  "Buy with 60 points" in shop4
                   and shop4.count("Buy with") == 1)
             # (b) Trade points BURN: offered points leave the giver
             # and reach nobody; each trader still gets the +20 award.
@@ -2881,14 +2881,14 @@ def main():
                 "SELECT * FROM users WHERE username='mseller'").fetchone()
             mb_row = pcong4.execute(
                 "SELECT * FROM users WHERE username='mbuyer'").fetchone()
-            # The weekly drifter is the points freebie (120 points).
+            # The weekly drifter is the points freebie (60 points).
             s, shopg = get(fb, "/shop", base=pbase)
             drift = pcong4.execute(
                 "SELECT * FROM popup_items WHERE tier='drifter' AND "
                 "stock>0 ORDER BY id DESC").fetchone()
-            check("weekly drifter carries a 120-point freebie price",
-                  drift is not None and drift["points_price"] == 120
-                  and "Buy with 120 points" in shopg)
+            check("weekly drifter carries a 60-point freebie price",
+                  drift is not None and drift["points_price"] == 60
+                  and "Buy with 60 points" in shopg)
             s, _ = post(fb, "/buy_popup_points",
                         {"popup_id": drift["id"]}, base=pbase)
             pcong5 = sqlite3.connect(pdb)
@@ -2901,8 +2901,8 @@ def main():
             drift2 = pcong5.execute(
                 "SELECT * FROM popup_items WHERE id=?",
                 (drift["id"],)).fetchone()
-            check("freebie buy spends 120 points, grants the baby",
-                  fb2["points"] == 480 and fb2["points_earned"] == 0
+            check("freebie buy spends 60 points, grants the baby",
+                  fb2["points"] == 540 and fb2["points_earned"] == 0
                   and fbb == 2 and drift2["stock"] == 0,
                   "points=%d babies=%d" % (fb2["points"], fbb))
             s, resp_gone = post(ms, "/buy_popup_points",
@@ -2954,7 +2954,7 @@ def main():
                   and mb2["points_earned"] == 20,
                   "ms=%d mb=%d" % (ms2["points"], mb2["points"]))
             # Points market: buyer (mb) lists the baby just received
-            # in the swap for 200 points; freebie buyer (fb, 480
+            # in the swap for 200 points; freebie buyer (fb, 540
             # points) buys it.
             s, _ = post(mb, "/points_list",
                         {"baby_id": ms_baby2["id"],
@@ -2984,7 +2984,7 @@ def main():
                 (lst["id"],)).fetchone()
             check("points sale moves points buyer to seller, baby "
                   "changes owner",
-                  fb3["points"] == 280 and mb3["points"] == 820
+                  fb3["points"] == 340 and mb3["points"] == 820
                   and mb3["points_earned"] == 20
                   and sold_baby["owner_id"] == fb_row["id"]
                   and lst2["status"] == "sold",
@@ -3264,7 +3264,7 @@ def main():
                          "hoodie_pattern, stones, face, price, stock, "
                          "sold) VALUES ('EHB-P999', 'Test Pop', "
                          "'Blues', 'Wave', 'yellow', 'fish-like', "
-                         "'1.99', 1, 0)")
+                         "'1.00', 1, 0)")
             pdb4.commit()
             pdb4.close()
             s, banner = get(anon, "/popup_banner", base=pbase)
