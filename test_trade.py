@@ -1568,12 +1568,24 @@ def main():
         check("detail viewer back is the illustrated image",
               wviews[1][1] == "Back view — illustrated"
               and "willow-back.jpg" in wviews[1][2])
-        kai_row = dict(willow_row, name="Kai", cert="EHB-BL005",
-                       tribe="Blues")
-        kviews = escamo_app.baby_detail_views(kai_row)
+        zorp_row = dict(willow_row, name="Zorp", cert="EHB-P-2026-W99",
+                        tribe="Reds")
+        zviews = escamo_app.baby_detail_views(zorp_row)
         check("detail viewer without a back image keeps the details card",
-              kviews[1][1] == "Back view — details"
-              and "-back.jpg" not in kviews[1][2])
+              zviews[1][1] == "Back view — details"
+              and "-back.jpg" not in zviews[1][2])
+        missing_backs = []
+        for _name, _fname in escamo_app.REALISTIC_IMAGES.items():
+            _back = _fname[:-4] + "-back.jpg"
+            if not os.path.exists(
+                    os.path.join(escamo_app.IMG_DIR, _back)):
+                missing_backs.append(_back)
+        if not os.path.exists(
+                os.path.join(escamo_app.IMG_DIR,
+                             "black-miner-back.jpg")):
+            missing_backs.append("black-miner-back.jpg")
+        check("every photographed baby has an illustrated back",
+              not missing_backs, str(missing_backs))
         check("deal price 25% off $1.99 is $1.49",
               escamo_app.deal_price("1.99", 0.25) == "1.49")
         check("deal price half off $1.99 is $1.00",
@@ -1971,7 +1983,8 @@ def main():
                   "/img/black-miner.jpg" in browse2_html)
             check("board cards turn around to the back jacket",
                   "Turn around" in browse2_html
-                  and "Back of jacket" in browse2_html
+                  and ("Back of jacket" in browse2_html
+                       or "Illustrated back" in browse2_html)
                   and "flipinner" in browse2_html)
             check("board cards drag to turn",
                   "flipstage" in browse2_html
