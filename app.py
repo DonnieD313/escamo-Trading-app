@@ -4890,9 +4890,22 @@ class Handler(BaseHTTPRequestHandler):
                          [(6, 40), (92, 42), (20, 58), (80, 60),
                           (58, 88), (12, 80), (88, 80), (38, 50),
                           (65, 45), (30, 75), (55, 65), (75, 85)])
-        grass = ("<div style='position:absolute;left:0;top:0;width:100%;"
-                 "height:100%;background:repeating-linear-gradient(90deg,"
-                 "#7cc24a 0 120px,#74b845 120px 240px)'></div>")
+        ground = ("<div style='position:absolute;left:0;top:0;width:100%;"
+                  "height:100%;background-color:#4d7a2e;background-image:"
+                  "radial-gradient(circle at 15% 20%,rgba(124,194,74,.55) 0 90px,transparent 91px),"
+                  "radial-gradient(circle at 75% 30%,rgba(30,122,52,.5) 0 120px,transparent 121px),"
+                  "radial-gradient(circle at 40% 70%,rgba(163,214,110,.45) 0 100px,transparent 101px),"
+                  "radial-gradient(circle at 85% 80%,rgba(30,122,52,.55) 0 110px,transparent 111px),"
+                  "radial-gradient(circle at 60% 50%,rgba(124,194,74,.4) 0 80px,transparent 81px)'></div>")
+        def ground_bit(lx, ty, mark):
+            return ("<div style='position:absolute;left:%d%%;top:%d%%;"
+                    "font-size:20px;opacity:.9' aria-hidden='true'>%s</div>"
+                    % (lx, ty, mark))
+        groundbits = "".join(ground_bit(lx, ty, mark) for lx, ty, mark in
+                             [(10, 55, "🍂"), (30, 68, "🍃"), (55, 45, "🍄"),
+                              (78, 62, "🍂"), (88, 88, "🌿"), (18, 85, "🍄"),
+                              (45, 78, "🍃"), (68, 90, "🍂"), (92, 50, "🌿"),
+                              (25, 42, "🌱")])
         def drift_cloud(top, dur):
             return ("<div style='position:absolute;top:%d%%;font-size:52px;"
                     "animation:drift %ds linear infinite' aria-hidden='true'>☁️</div>"
@@ -4938,6 +4951,8 @@ class Handler(BaseHTTPRequestHandler):
                 "steps(2,end) infinite alternate-reverse} "
                 ".walking .arm-r{animation:robostep .4s "
                 "steps(2,end) infinite alternate} "
+                "@keyframes bob{from{transform:translateY(0)}to{transform:translateY(-4px)}} "
+                ".walking .bob{animation:bob .6s ease-in-out infinite alternate} "
                 "@keyframes drift{from{left:-12%}to{left:112%}} "
                 ".canopy{animation:sway 3.2s ease-in-out infinite alternate;transform-origin:50% 100%} "
                 "@keyframes sway{from{transform:rotate(-2deg)}to{transform:rotate(2deg)}} "
@@ -4969,7 +4984,7 @@ class Handler(BaseHTTPRequestHandler):
                 "<a href='/me'>My Collection</a></span></div>"
                 "<div id='field' style='position:relative;flex:1;"
                 "min-height:0;overflow:hidden;touch-action:none;"
-                "background:#7cc24a'>"
+                "background:#4d7a2e'>"
                 "<div id='world' style='position:absolute;width:200%;"
                 "height:200%;left:-50%;top:-50%;transition:left .6s linear,"
                 "top .6s linear'>"
@@ -4988,7 +5003,7 @@ class Handler(BaseHTTPRequestHandler):
                 "<div style='position:absolute;left:2%;top:70%;"
                 "font-size:13px;background:#0d3b38;color:#f0c75e;"
                 "border-radius:8px;padding:1px 6px'>🌲 Fortress "
-                "Rooted village</div>" + grass + clouds + trees +
+                "Rooted village</div>" + ground + groundbits + trees +
                 "<div id='players'></div><div id='items'></div>" + houses + "</div></div>"
                 "<div id='chatlog' style='max-height:64px;"
                 "overflow:auto;padding:6px 10px;font-size:13px;"
@@ -4998,7 +5013,7 @@ class Handler(BaseHTTPRequestHandler):
                 "var ME=" + json.dumps(me) + ";var POS=null;"
                 "function esc(s){return s.replace(/&/g,'&amp;')"
                 ".replace(/</g,'&lt;');}"
-                "function robotHTML(p){var c={Blues:'#2b5ea7',Browns:'#7a4a21',Reds:'#c0392b'}[p.tribe]||'#2b5ea7';var tmp=document.createElement('div');tmp.innerHTML=p.avatar;var im=tmp.querySelector('img');var src=im?im.getAttribute('src'):'';var head=src?\"<img src='\"+src+\"' style='width:52px;height:52px;object-fit:cover;object-position:50% 22%;border:3px solid \"+c+\";border-radius:2px;display:block;margin:0 auto'>\":\"<div style='width:52px;height:52px;background:\"+c+\";border:3px solid #333;border-radius:2px;margin:0 auto;font-size:26px;line-height:52px'>🧸</div>\";return \"<div style='width:74px;margin:0 auto'>\"+head+\"<div style='width:60px;height:38px;background:\"+c+\";border:3px solid #333;border-radius:4px;margin:2px auto 0;position:relative'><span style='position:absolute;left:9px;top:9px;color:#ffd700'>✦</span><span style='position:absolute;left:24px;top:15px;color:#ffd700'>✦</span><span style='position:absolute;left:39px;top:7px;color:#ffd700'>✦</span><span class='arm arm-l' style='position:absolute;left:-15px;top:2px;width:13px;height:32px;background:#333;border-radius:3px'></span><span class='arm arm-r' style='position:absolute;right:-15px;top:2px;width:13px;height:32px;background:#333;border-radius:3px'></span></div><div style='display:flex;justify-content:center;gap:6px'><div class='leg leg-l' style='width:15px;height:22px;background:#333;border-radius:3px'></div><div class='leg leg-r' style='width:15px;height:22px;background:#333;border-radius:3px'></div></div></div>\";}"
+                "function babyHTML(p){var c={Blues:'#2b5ea7',Browns:'#7a4a21',Reds:'#c0392b'}[p.tribe]||'#2b5ea7';var tmp=document.createElement('div');tmp.innerHTML=p.avatar;var im=tmp.querySelector('img');var src=im?im.getAttribute('src'):'';var photo=src?\"<img src='\"+src+\"' style='width:76px;height:76px;object-fit:cover;border:3px solid \"+c+\";border-radius:14px;display:block;margin:0 auto;box-shadow:0 4px 8px rgba(0,0,0,.45)'>\":\"<div style='width:76px;height:76px;background:\"+c+\";border:3px solid #333;border-radius:14px;margin:0 auto;font-size:34px;line-height:76px'>🧸</div>\";return \"<div class='bob'>\"+photo+\"<div style='width:52px;height:10px;background:rgba(0,0,0,.3);border-radius:50%;margin:3px auto 0'></div></div>\";}"
 "function render(st){window._ST=st;var h='';"
                 "st.players.forEach(function(p,i){"
                 "if(p.you&&!POS){POS={x:p.x,y:p.y};}"
@@ -5015,7 +5030,7 @@ class Handler(BaseHTTPRequestHandler):
                 "var bub=p.bubble?\"<div style='background:#fdf6e3;border:2px solid #d4af37;"
                 "border-radius:10px;padding:4px 8px;font-size:13px;"
                 "max-width:160px'>\"+esc(p.bubble)+\"</div>\":'';"
-                "h+=\"<div \"+(p.you?\"id='me-ava' \":\"\")+\"data-pname='\"+esc(p.username)+\"' class='\"+(moved?\"walking\":\"idle\")+\"' style='position:absolute;transition:left .6s linear,top .6s linear;left:\"+p.x+\"%;top:\"+p.y+\"%;transform:translate(-50%,-50%);text-align:center'>\"+bub+\"<div>\"+robotHTML(p)+\"</div><div style='background:#fdf6e3;border:2px solid #d4af37;border-radius:8px;padding:1px 6px;font-size:11px'>\"+dot+\"<a href='/shelf/\"+encodeURIComponent(p.username)+\"'>\"+esc(p.username)+\"</a>\"+(p.you?\" (You)\":\"\")+\"</div></div>\";});"
+                "h+=\"<div \"+(p.you?\"id='me-ava' \":\"\")+\"data-pname='\"+esc(p.username)+\"' class='\"+(moved?\"walking\":\"idle\")+\"' style='position:absolute;transition:left .6s linear,top .6s linear;left:\"+p.x+\"%;top:\"+p.y+\"%;transform:translate(-50%,-50%);text-align:center'>\"+bub+\"<div>\"+babyHTML(p)+\"</div><div style='background:#fdf6e3;border:2px solid #d4af37;border-radius:8px;padding:1px 6px;font-size:11px'>\"+dot+\"<a href='/shelf/\"+encodeURIComponent(p.username)+\"'>\"+esc(p.username)+\"</a>\"+(p.you?\" (You)\":\"\")+\"</div></div>\";});"
                 "document.getElementById('players').innerHTML=h;"
                 "document.getElementById('items').innerHTML="
                 "(st.items||[]).map(function(it){return \"<div "

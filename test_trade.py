@@ -3152,22 +3152,26 @@ def main():
             check("live world carries the popup banner slot",
                   "popup-banner" in liveb)
             # (q) Robot babies with photo faces, punch + pick up.
-            check("live page builds blocky figures with photo faces",
-                  "walkerSVG" not in liveb and "robotHTML" in liveb
-                  and "leg leg-l" in liveb and "arm arm-l" in liveb
-                  and "antenna" not in liveb and "robostep" in liveb
+            check("live page shows babies as full photos on the field",
+                  "walkerSVG" not in liveb and "babyHTML" in liveb
+                  and "robotHTML" not in liveb
+                  and "leg leg-l" not in liveb
+                  and "antenna" not in liveb
                   and "p.avatar" in liveb and "me-ava" in liveb
-                  and "52px;height:52px" in liveb
-                  and "width:60px;height:38px" in liveb
-                  and "46px;height:46px" not in liveb)
-            check("forest field has grass, clouds, trees and houses",
-                  "#1e7a34" in liveb and "#7cc24a" in liveb
+                  and "76px;height:76px" in liveb
+                  and "52px;height:52px" not in liveb
+                  and "width:60px;height:38px" not in liveb
+                  and "class='bob'" in liveb)
+            check("forest floor has moss ground, leaves, trees and houses",
+                  "#1e7a34" in liveb and "#4d7a2e" in liveb
+                  and "radial-gradient(circle at" in liveb
+                  and "🍄" in liveb and "🍂" in liveb
                   and "hide here" in liveb
                   and "butterfly" not in liveb
                   and "Hoodie Shop" not in liveb
                   and "#3a3a3a" not in liveb
                   and "id='world'" in liveb and "_CAMX" in liveb
-                  and "drift" in liveb and "sway" in liveb
+                  and "sway" in liveb
                   and "Forest" in liveb)
             check("taps on characters are no longer ignored",
                   "closest('#players')" not in liveb)
