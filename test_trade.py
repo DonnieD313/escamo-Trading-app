@@ -3162,11 +3162,11 @@ def main():
                   and "52px;height:52px" not in liveb
                   and "width:60px;height:38px" not in liveb
                   and "class='bob'" in liveb)
-            check("forest floor photo, trees and houses",
+            check("forest floor photo tiled, trees, no houses",
                   "#1e7a34" in liveb and "#4d7a2e" in liveb
-                  and "background-image:url(/img/forest-floor.jpg);background-size:100% 100%" in liveb
+                  and "background-image:url(/img/forest-floor.jpg);background-size:500px auto" in liveb
                   and "url('/img/forest-floor.jpg')" not in liveb
-                  and "hide here" in liveb
+                  and "hide here" not in liveb
                   and "butterfly" not in liveb
                   and "Hoodie Shop" not in liveb
                   and "#3a3a3a" not in liveb

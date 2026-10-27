@@ -4892,7 +4892,8 @@ class Handler(BaseHTTPRequestHandler):
                           (65, 45), (30, 75), (55, 65), (75, 85)])
         ground = ("<div style='position:absolute;left:0;top:0;width:100%;"
                   "height:100%;background-color:#4d7a2e;background-image:"
-                  "url(/img/forest-floor.jpg);background-size:100% 100%;"
+                  "url(/img/forest-floor.jpg);background-size:500px auto;"
+                  "background-repeat:repeat;"
                   "background-position:center'></div>")
         def ground_bit(lx, ty, mark):
             return ("<div style='position:absolute;left:%d%%;top:%d%%;"
@@ -5001,7 +5002,7 @@ class Handler(BaseHTTPRequestHandler):
                 "font-size:13px;background:#0d3b38;color:#f0c75e;"
                 "border-radius:8px;padding:1px 6px'>🌲 Fortress "
                 "Rooted village</div>" + ground + trees +
-                "<div id='players'></div><div id='items'></div>" + houses + "</div></div>"
+                "<div id='players'></div><div id='items'></div></div></div>"
                 "<div id='chatlog' style='max-height:64px;"
                 "overflow:auto;padding:6px 10px;font-size:13px;"
                 "background:#0d3b38;border-top:4px solid #d4af37;color:#fdf6e3'>"
