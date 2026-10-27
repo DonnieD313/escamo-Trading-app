@@ -3049,6 +3049,26 @@ def main():
             check("play field has trees and babies at play",
                   "🌳" in play and "play-baby" in play
                   and "@keyframes hop" in play)
+            # (m) Live World: move around together + chat.
+            s, live = get(anon, "/live", base=pbase)
+            check("live world page loads with field and controls",
+                  "Live World" in live and "🌳" in live
+                  and "play_state" in live)
+            s, moved = post(sh, "/play_move",
+                            {"x": "30", "y": "40"}, base=pbase)
+            check("signed-in move is accepted",
+                  s == 200 and '"ok": true' in moved)
+            s, said = post(sh, "/play_chat",
+                           {"text": "hello village"}, base=pbase)
+            check("signed-in chat is accepted",
+                  s == 200 and '"ok": true' in said)
+            s, state = get(sh2, "/play_state", base=pbase)
+            check("live state shows the moved player and the chat",
+                  '"shelfy"' in state and '"x": 30' in state
+                  and "hello village" in state)
+            s, refused = post(anon, "/play_move",
+                              {"x": "10", "y": "10"}, base=pbase)
+            check("logged-out move is refused", s == 403)
             pcongs.close()
             pcong4.close()
             pcong5.close()

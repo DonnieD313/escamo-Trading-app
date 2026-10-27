@@ -844,6 +844,23 @@ def init_db():
     # within the last 5 minutes.
     if "last_seen" not in user_cols:
         con.execute("ALTER TABLE users ADD COLUMN last_seen TEXT")
+    # Live World: where each player stands in the shared field, and
+    # what they last said. Positions update by polling, not a live
+    # socket — the page asks the server every 2 seconds.
+    con.execute("""
+    CREATE TABLE IF NOT EXISTS player_positions (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id),
+        x REAL NOT NULL DEFAULT 50,
+        y REAL NOT NULL DEFAULT 50,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )""")
+    con.execute("""
+    CREATE TABLE IF NOT EXISTS play_chat (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        text TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )""")
     # Migration for the tribe renames: rewrite old tribe names in the
     # Notices board so no user-facing page still shows them.
     for old, new in (("Blacks", "Shadows"),
@@ -1392,6 +1409,7 @@ def page(title, body, user=None):
                "<a href='/world'>World</a> | "
                "<a href='/village'>Village</a> | "
                "<a href='/play'>Play</a> | "
+               "<a href='/live'>Live</a> | "
                "<a href='/notices'>Notices</a> | "
                "<a href='/logout'>Log out (%s)</a> | "
                "%s</nav>%s" % (esc(user["username"]), share_btn,
@@ -1403,6 +1421,7 @@ def page(title, body, user=None):
                "<a href='/world'>World</a> | "
                "<a href='/village'>Village</a> | "
                "<a href='/play'>Play</a> | "
+               "<a href='/live'>Live</a> | "
                "<a href='/notices'>Notices</a> | "
                "%s</nav>%s" % (share_btn, share_notice))
     return ("<!DOCTYPE html><html><head><meta charset='utf-8'>"
@@ -1988,6 +2007,15 @@ class Handler(BaseHTTPRequestHandler):
                 "csrf_token=%s%s" % (self._csrf_token,
                                      self._cookie_flags()))
 
+    def send_json(self, obj, status=200):
+        data = json.dumps(obj).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self._send_csrf_cookie()
+        self.end_headers()
+        self.wfile.write(data)
+
     def send_html(self, body, status=200):
         # Inject the CSRF token into every POST form in one place, so
         # no form can forget it.
@@ -2115,6 +2143,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.village_page(con, user)
             elif path == "/play":
                 self.play_page(con, user)
+            elif path == "/live":
+                self.live_page(con, user)
+            elif path == "/play_state":
+                self.play_state(con, user)
             elif path == "/shelf":
                 self.shelf_page(con, user)
             elif path.startswith("/shelf/"):
@@ -2204,6 +2236,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.do_points_buy(con, user)
             elif path == "/points_cancel":
                 self.do_points_cancel(con, user)
+            elif path == "/play_move":
+                self.do_play_move(con, user)
+            elif path == "/play_chat":
+                self.do_play_chat(con, user)
             elif path == "/recolor":
                 self.do_recolor(con, user)
             elif path == "/recruit":
@@ -4560,6 +4596,216 @@ class Handler(BaseHTTPRequestHandler):
                 "<a href='/me'>My Collection</a></p>"
                 + signin_note + trees + plots
                 + "</div></body></html>")
+        self.send_html(html)
+
+    def _live_players(self, con, user):
+        """Everyone with a baby, where they stand in the Live World,
+        and their latest chat line (shown as a speech bubble for 2
+        minutes). Positions default to a scattered spawn point until
+        a player moves."""
+        def online(p):
+            raw = _bget(p, "last_seen")
+            if not raw:
+                return False
+            try:
+                seen = datetime.datetime.strptime(
+                    raw, "%Y-%m-%d %H:%M:%S")
+            except (ValueError, TypeError):
+                return False
+            return (datetime.datetime.utcnow() - seen) < \
+                datetime.timedelta(minutes=5)
+
+        players = con.execute(
+            "SELECT users.*, COUNT(babies.id) AS n FROM users LEFT JOIN "
+            "babies ON babies.owner_id = users.id WHERE users.username "
+            "!= 'underground' GROUP BY users.id HAVING n > 0 ORDER BY "
+            "users.username").fetchall()
+        out = []
+        for p in players:
+            baby = con.execute("SELECT * FROM babies WHERE owner_id=? "
+                               "ORDER BY id LIMIT 1",
+                               (p["id"],)).fetchone()
+            pos = con.execute("SELECT * FROM player_positions WHERE "
+                              "user_id=?", (p["id"],)).fetchone()
+            if pos:
+                x, y = pos["x"], pos["y"]
+            else:
+                x = 20 + (p["id"] * 37 % 60)
+                y = 30 + (p["id"] * 23 % 40)
+            msg = con.execute("SELECT text, created_at FROM play_chat "
+                              "WHERE user_id=? ORDER BY id DESC LIMIT 1",
+                              (p["id"],)).fetchone()
+            bubble = ""
+            if msg:
+                try:
+                    said = datetime.datetime.strptime(
+                        msg["created_at"], "%Y-%m-%d %H:%M:%S")
+                    fresh = (datetime.datetime.utcnow() - said) < \
+                        datetime.timedelta(minutes=2)
+                except (ValueError, TypeError):
+                    fresh = False
+                if fresh:
+                    bubble = msg["text"]
+            out.append({"username": p["username"], "x": x, "y": y,
+                        "avatar": baby_img_html(baby, 64) if baby else "",
+                        "online": online(p), "bubble": bubble,
+                        "you": bool(user and user["id"] == p["id"])})
+        return out
+
+    def play_state(self, con, user):
+        msgs = con.execute(
+            "SELECT play_chat.text, users.username FROM play_chat JOIN "
+            "users ON users.id = play_chat.user_id ORDER BY play_chat.id "
+            "DESC LIMIT 20").fetchall()
+        msgs.reverse()
+        self.send_json({
+            "players": self._live_players(con, user),
+            "messages": [{"username": m["username"], "text": m["text"]}
+                         for m in msgs]})
+
+    def do_play_move(self, con, user):
+        if not user:
+            self.send_json({"ok": False, "error": "login required"},
+                           403)
+            return
+        try:
+            x = max(0.0, min(92.0, float(self.form().get("x", 50))))
+            y = max(0.0, min(85.0, float(self.form().get("y", 50))))
+        except (TypeError, ValueError):
+            self.send_json({"ok": False, "error": "bad position"}, 400)
+            return
+        con.execute("INSERT INTO player_positions (user_id, x, y, "
+                    "updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) "
+                    "ON CONFLICT(user_id) DO UPDATE SET x=excluded.x, "
+                    "y=excluded.y, updated_at=CURRENT_TIMESTAMP",
+                    (user["id"], x, y))
+        con.commit()
+        self.send_json({"ok": True, "x": x, "y": y})
+
+    def do_play_chat(self, con, user):
+        if not user:
+            self.send_json({"ok": False, "error": "login required"},
+                           403)
+            return
+        text = (self.form().get("text") or "").strip()[:200]
+        if not text:
+            self.send_json({"ok": False, "error": "empty message"},
+                           400)
+            return
+        con.execute("INSERT INTO play_chat (user_id, text) VALUES "
+                    "(?, ?)", (user["id"], text))
+        con.execute("DELETE FROM play_chat WHERE id NOT IN (SELECT id "
+                    "FROM play_chat ORDER BY id DESC LIMIT 50)")
+        con.commit()
+        self.send_json({"ok": True})
+
+    def live_page(self, con, user):
+        """Full-screen Live World: players move around one shared
+        field together and chat. The page polls /play_state every 2
+        seconds — movement and chat arrive that fast, not frame by
+        frame like a console game."""
+        me = user["username"] if user else ""
+        controls = ""
+        if user:
+            controls = (
+                "<div style='position:fixed;left:0;right:0;bottom:0;"
+                "background:rgba(255,255,255,0.95);padding:8px;"
+                "box-sizing:border-box'>"
+                "<div style='text-align:center'>"
+                "<button onclick='move(0,-6)'>⬆️</button><br>"
+                "<button onclick='move(-4,0)'>⬅️</button> "
+                "<button onclick='move(4,0)'>➡️</button><br>"
+                "<button onclick='move(0,6)'>⬇️</button> "
+                "<span style='font-size:13px'>Move with the arrows "
+                "or your keyboard</span></div>"
+                "<form id='chatform' style='display:flex;gap:6px;"
+                "margin-top:6px'><input id='chatin' maxlength='200' "
+                "placeholder='Say something to the village…' "
+                "style='flex:1;padding:8px' autocomplete='off'>"
+                "<button>Send</button></form></div>")
+        else:
+            controls = (
+                "<div style='position:fixed;left:0;right:0;bottom:0;"
+                "background:rgba(255,255,255,0.95);padding:10px;"
+                "text-align:center'><a href='/login'>Log in</a> or "
+                "<a href='/signup'>sign up</a> to walk around and "
+                "chat — you can watch everyone else meanwhile.</div>")
+        trees = "".join(
+            "<span style='position:absolute;left:%d%%;top:%d%%;"
+            "font-size:52px' aria-hidden='true'>%s</span>"
+            % (lx, ty, tree)
+            for lx, ty, tree in
+            [(4, 12, "🌳"), (88, 10, "🌲"), (12, 62, "🌲"),
+             (82, 58, "🌳"), (48, 8, "🌳")])
+        html = ("<!DOCTYPE html><html><head><meta charset='utf-8'>"
+                "<meta name='viewport' content='width=device-width,"
+                "initial-scale=1'>"
+                "<title>Live World — Hoodie Babies</title>"
+                "<style>html,body{margin:0;padding:0;font-family:"
+                "system-ui,sans-serif} button{padding:10px 14px;"
+                "font-size:18px} a{color:#14532d}</style>"
+                "</head><body><div id='field' style='position:"
+                "relative;height:100vh;overflow:hidden;"
+                "background:linear-gradient(#bfe3ff 0 30%,#b7e39a "
+                "30%);'>"
+                "<div style='padding:12px'><h1 style='margin:0'>"
+                "🌍 Live World</h1><p style='margin:4px 0'>"
+                "Walk around with other players and chat live. "
+                "<a href='/play'>Play scene</a> | "
+                "<a href='/village'>Village list</a> | "
+                "<a href='/me'>My Collection</a></p>"
+                "<div id='chatlog' style='max-height:90px;"
+                "overflow:auto;background:rgba(255,255,255,0.7);"
+                "border-radius:10px;padding:6px;font-size:14px'>"
+                "</div></div>" + trees +
+                "<div id='players'></div></div>" + controls +
+                "<script>var CSRF='" + esc(self._csrf_token or "") + "';"
+                "var ME=" + json.dumps(me) + ";var POS=null;"
+                "function esc(s){return s.replace(/&/g,'&amp;')"
+                ".replace(/</g,'&lt;');}"
+                "function render(st){var h='';"
+                "st.players.forEach(function(p){"
+                "if(p.you&&!POS){POS={x:p.x,y:p.y};}"
+                "var dot=p.online?\"<span style='color:green'>●"
+                "</span>\":\"<span style='color:#888'>●</span>\";"
+                "var bub=p.bubble?\"<div style='background:white;"
+                "border-radius:10px;padding:4px 8px;font-size:13px;"
+                "max-width:160px'>\"+esc(p.bubble)+\"</div>\":'';"
+                "h+=\"<div style='position:absolute;left:\"+p.x+\"%;"
+                "top:\"+p.y+\"%;transform:translate(-50%,-50%);"
+                "text-align:center'>\"+bub+\"<div>\"+p.avatar+\"</div>"
+                "<div style='background:rgba(255,255,255,0.85);"
+                "border-radius:8px;padding:1px 6px;font-size:13px'>"
+                "\"+dot+esc(p.username)+(p.you?' (You)':'')+\"</div>"
+                "</div>\";});"
+                "document.getElementById('players').innerHTML=h;"
+                "document.getElementById('chatlog').innerHTML="
+                "st.messages.map(function(m){return '<b>'+esc("
+                "m.username)+':</b> '+esc(m.text);}).join('<br>');}"
+                "function poll(){fetch('/play_state').then(function(r)"
+                "{return r.json();}).then(render);}"
+                "function move(dx,dy){if(!ME||!POS){return;}"
+                "POS.x=Math.max(0,Math.min(92,POS.x+dx));"
+                "POS.y=Math.max(0,Math.min(85,POS.y+dy));"
+                "var f=new URLSearchParams();f.append('csrf_token',"
+                "CSRF);f.append('x',POS.x);f.append('y',POS.y);"
+                "fetch('/play_move',{method:'POST',body:f});poll();}"
+                "document.addEventListener('keydown',function(e){"
+                "if(document.activeElement&&document.activeElement"
+                ".id==='chatin'){return;}"
+                "if(e.key==='ArrowUp'){move(0,-6);}"
+                "if(e.key==='ArrowDown'){move(0,6);}"
+                "if(e.key==='ArrowLeft'){move(-4,0);}"
+                "if(e.key==='ArrowRight'){move(4,0);}});"
+                "var cf=document.getElementById('chatform');"
+                "if(cf){cf.addEventListener('submit',function(e){"
+                "e.preventDefault();var inp=document.getElementById"
+                "('chatin');var f=new URLSearchParams();"
+                "f.append('csrf_token',CSRF);f.append('text',inp.value);"
+                "fetch('/play_chat',{method:'POST',body:f}).then("
+                "function(){inp.value='';poll();});});}"
+                "poll();setInterval(poll,2000);</script>"
+                "</body></html>")
         self.send_html(html)
 
     def do_shelf_add(self, con, user):
