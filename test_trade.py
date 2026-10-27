@@ -3162,10 +3162,9 @@ def main():
                   and "52px;height:52px" not in liveb
                   and "width:60px;height:38px" not in liveb
                   and "class='bob'" in liveb)
-            check("forest floor has moss ground, leaves, trees and houses",
+            check("forest floor photo, trees and houses",
                   "#1e7a34" in liveb and "#4d7a2e" in liveb
-                  and "radial-gradient(circle at" in liveb
-                  and "🍄" in liveb and "🍂" in liveb
+                  and "forest-floor.jpg" in liveb
                   and "hide here" in liveb
                   and "butterfly" not in liveb
                   and "Hoodie Shop" not in liveb

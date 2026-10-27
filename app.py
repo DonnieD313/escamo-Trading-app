@@ -4892,11 +4892,8 @@ class Handler(BaseHTTPRequestHandler):
                           (65, 45), (30, 75), (55, 65), (75, 85)])
         ground = ("<div style='position:absolute;left:0;top:0;width:100%;"
                   "height:100%;background-color:#4d7a2e;background-image:"
-                  "radial-gradient(circle at 15% 20%,rgba(124,194,74,.55) 0 90px,transparent 91px),"
-                  "radial-gradient(circle at 75% 30%,rgba(30,122,52,.5) 0 120px,transparent 121px),"
-                  "radial-gradient(circle at 40% 70%,rgba(163,214,110,.45) 0 100px,transparent 101px),"
-                  "radial-gradient(circle at 85% 80%,rgba(30,122,52,.55) 0 110px,transparent 111px),"
-                  "radial-gradient(circle at 60% 50%,rgba(124,194,74,.4) 0 80px,transparent 81px)'></div>")
+                  "url('/img/forest-floor.jpg');background-size:100% 100%;"
+                  "background-position:center'></div>")
         def ground_bit(lx, ty, mark):
             return ("<div style='position:absolute;left:%d%%;top:%d%%;"
                     "font-size:20px;opacity:.9' aria-hidden='true'>%s</div>"
@@ -5003,7 +5000,7 @@ class Handler(BaseHTTPRequestHandler):
                 "<div style='position:absolute;left:2%;top:70%;"
                 "font-size:13px;background:#0d3b38;color:#f0c75e;"
                 "border-radius:8px;padding:1px 6px'>🌲 Fortress "
-                "Rooted village</div>" + ground + groundbits + trees +
+                "Rooted village</div>" + ground + trees +
                 "<div id='players'></div><div id='items'></div>" + houses + "</div></div>"
                 "<div id='chatlog' style='max-height:64px;"
                 "overflow:auto;padding:6px 10px;font-size:13px;"
