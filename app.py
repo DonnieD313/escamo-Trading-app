@@ -861,26 +861,7 @@ def init_db():
         text TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
-    # Play fights: health per player. No stakes — no points or
-    # babies are ever lost; a knockout just respawns you at full
-    # health, and health comes back on its own after a quiet minute.
-    con.execute("""
-    CREATE TABLE IF NOT EXISTS play_health (
-        user_id INTEGER PRIMARY KEY REFERENCES users(id),
-        hp INTEGER NOT NULL DEFAULT 100,
-        last_damage_at TEXT,
-        last_hit_at TEXT
-    )""")
-    # Practice dummy: one punchable dummy in the field so players
-    # can battle even when nobody else is online.
-    con.execute("""
-    CREATE TABLE IF NOT EXISTS play_dummy (
-        id INTEGER PRIMARY KEY,
-        hp INTEGER NOT NULL DEFAULT 100
-    )""")
-    con.execute("INSERT OR IGNORE INTO play_dummy (id, hp) VALUES "
-                "(1, 100)")
-    # Field pickups: flowers, balls and butterflies lying in
+    # Field pickups: flowers, balls and stars lying in
     # the Live World field for players to pick up with the Pick
     # Up button. A picked item respawns elsewhere so the field
     # never runs bare.
@@ -2313,8 +2294,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.do_play_move(con, user)
             elif path == "/play_chat":
                 self.do_play_chat(con, user)
-            elif path == "/play_hit":
-                self.do_play_hit(con, user)
+            elif path == "/play_wave":
+                self.do_play_wave(con, user)
             elif path == "/pickup":
                 self.do_pickup(con, user)
             elif path == "/recolor":
@@ -4723,21 +4704,6 @@ class Handler(BaseHTTPRequestHandler):
                 x, y = pos["x"], pos["y"]
             else:
                 x, y = self._spawn(p["id"], user_tribe(con, p))
-            hrow = con.execute("SELECT * FROM play_health WHERE "
-                               "user_id=?", (p["id"],)).fetchone()
-            hp = hrow["hp"] if hrow else 100
-            if hp < 100 and hrow and hrow["last_damage_at"]:
-                try:
-                    hurt = datetime.datetime.strptime(
-                        hrow["last_damage_at"], "%Y-%m-%d %H:%M:%S")
-                    quiet = (datetime.datetime.utcnow() - hurt) > \
-                        datetime.timedelta(minutes=1)
-                except (ValueError, TypeError):
-                    quiet = False
-                if quiet:
-                    hp = 100
-                    con.execute("UPDATE play_health SET hp=100 WHERE "
-                                "user_id=?", (p["id"],))
             msg = con.execute("SELECT text, created_at FROM play_chat "
                               "WHERE user_id=? ORDER BY id DESC LIMIT 1",
                               (p["id"],)).fetchone()
@@ -4755,19 +4721,13 @@ class Handler(BaseHTTPRequestHandler):
             out.append({"username": p["username"], "x": x, "y": y,
                         "avatar": baby_img_html(baby, 64) if baby else "",
                         "tribe": user_tribe(con, p),
-                        "online": online(p), "bubble": bubble, "hp": hp,
+                        "online": online(p), "bubble": bubble,
                         "you": bool(user and user["id"] == p["id"])})
-        drow = con.execute("SELECT hp FROM play_dummy WHERE id=1"
-                           ).fetchone()
-        out.append({"username": "Practice Dummy", "x": 50, "y": 45,
-                    "avatar": "<div style='font-size:60px;line-height:1'>🎯</div>", "tribe": "Dummy", "online": True,
-                    "bubble": "", "hp": drow["hp"] if drow else 100,
-                    "you": False, "dummy": True})
         return out
 
     def do_pickup(self, con, user):
         """Pick up the nearest field item within reach (15% on both
-        axes, the same reach as a punch). The item goes into your
+        axes, within reach). The item goes into your
         carried pile and a fresh one of the same kind appears
         elsewhere in the field."""
         if not user:
@@ -4824,128 +4784,28 @@ class Handler(BaseHTTPRequestHandler):
             "messages": [{"username": m["username"], "text": m["text"]}
                          for m in msgs]})
 
-    def do_play_hit(self, con, user):
-        """One playful hit on another player in the Live World.
-        You must be near them, they must be online, and your hits
-        are 2 seconds apart. 10 damage a hit; a knockout respawns
-        the loser at full health at their spawn point."""
+    def do_play_wave(self, con, user):
+        """Wave at another player in the field: a friendly chat line
+        that shows above your baby and in the chat log."""
         if not user:
             self.send_json({"ok": False, "error": "login required"},
                            403)
             return
-        if self.form().get("target") == "__dummy__":
-            now = datetime.datetime.utcnow()
-            mine = con.execute("SELECT * FROM play_health WHERE "
-                               "user_id=?", (user["id"],)).fetchone()
-            if mine and mine["last_hit_at"]:
-                try:
-                    last = datetime.datetime.strptime(
-                        mine["last_hit_at"], "%Y-%m-%d %H:%M:%S")
-                    if (now - last) < datetime.timedelta(seconds=2):
-                        self.send_json({"ok": False,
-                                        "error": "too_fast"}, 400)
-                        return
-                except (ValueError, TypeError):
-                    pass
-            prow = con.execute("SELECT * FROM player_positions WHERE "
-                               "user_id=?", (user["id"],)).fetchone()
-            ax, ay = (prow["x"], prow["y"]) if prow else self._spawn(
-                user["id"], user_tribe(con, user))
-            if abs(ax - 50) > 15 or abs(ay - 45) > 15:
-                self.send_json({"ok": False, "error": "too_far"}, 400)
-                return
-            drow = con.execute("SELECT hp FROM play_dummy WHERE id=1"
-                               ).fetchone()
-            hp = (drow["hp"] if drow else 100) - 10
-            ko = hp <= 0
-            if ko:
-                hp = 100
-                con.execute("INSERT INTO play_chat (user_id, text) "
-                            "VALUES (?, ?)", (user["id"],
-                                "💥 %s knocked out the practice dummy!"
-                                % user["username"]))
-            con.execute("UPDATE play_dummy SET hp=? WHERE id=1",
-                        (hp,))
-            con.execute("INSERT INTO play_health (user_id, last_hit_at)"
-                        " VALUES (?, CURRENT_TIMESTAMP) ON CONFLICT"
-                        "(user_id) DO UPDATE SET last_hit_at="
-                        "CURRENT_TIMESTAMP", (user["id"],))
-            con.commit()
-            self.send_json({"ok": True, "hp": hp, "ko": ko})
-            return
-        target = con.execute("SELECT * FROM users WHERE username=?",
-                             (self.form().get("target") or "",)
-                             ).fetchone()
-        if not target:
-            self.send_json({"ok": False, "error": "no such player"},
+        target = (self.form().get("target") or "").strip()
+        if not target or target == user["username"]:
+            self.send_json({"ok": False, "error": "no wave target"},
                            400)
             return
-        if target["id"] == user["id"]:
-            self.send_json({"ok": False, "error": "self"}, 400)
+        trow = con.execute("SELECT id FROM users WHERE username=?",
+                           (target,)).fetchone()
+        if not trow:
+            self.send_json({"ok": False, "error": "unknown player"},
+                           404)
             return
-        raw = target["last_seen"]
-        try:
-            seen = datetime.datetime.strptime(raw, "%Y-%m-%d %H:%M:%S")
-            away = (datetime.datetime.utcnow() - seen) >= \
-                datetime.timedelta(minutes=5)
-        except (ValueError, TypeError):
-            away = True
-        if away:
-            self.send_json({"ok": False, "error": "away"}, 400)
-            return
-
-        def pos_of(u):
-            row = con.execute("SELECT * FROM player_positions WHERE "
-                              "user_id=?", (u["id"],)).fetchone()
-            return (row["x"], row["y"]) if row else self._spawn(
-                u["id"], user_tribe(con, u))
-
-        ax, ay = pos_of(user)
-        tx, ty = pos_of(target)
-        if abs(ax - tx) > 15 or abs(ay - ty) > 15:
-            self.send_json({"ok": False, "error": "too_far"}, 400)
-            return
-        now = datetime.datetime.utcnow()
-        mine = con.execute("SELECT * FROM play_health WHERE user_id=?",
-                           (user["id"],)).fetchone()
-        if mine and mine["last_hit_at"]:
-            try:
-                last = datetime.datetime.strptime(
-                    mine["last_hit_at"], "%Y-%m-%d %H:%M:%S")
-                if (now - last) < datetime.timedelta(seconds=2):
-                    self.send_json({"ok": False, "error": "too_fast"},
-                                   400)
-                    return
-            except (ValueError, TypeError):
-                pass
-        trow = con.execute("SELECT * FROM play_health WHERE user_id=?",
-                           (target["id"],)).fetchone()
-        hp = (trow["hp"] if trow else 100) - 10
-        ko = hp <= 0
-        if ko:
-            hp = 100
-            sx, sy = self._spawn(target["id"], user_tribe(con, target))
-            con.execute("INSERT INTO player_positions (user_id, x, y, "
-                        "updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)"
-                        " ON CONFLICT(user_id) DO UPDATE SET x=excluded.x,"
-                        " y=excluded.y, updated_at=CURRENT_TIMESTAMP",
-                        (target["id"], sx, sy))
-            con.execute("INSERT INTO play_chat (user_id, text) VALUES "
-                        "(?, ?)", (user["id"],
-                                    "💥 %s knocked out %s!"
-                                    % (user["username"],
-                                       target["username"])))
-        con.execute("INSERT INTO play_health (user_id, hp, "
-                    "last_damage_at) VALUES (?, ?, CURRENT_TIMESTAMP) "
-                    "ON CONFLICT(user_id) DO UPDATE SET hp=excluded.hp, "
-                    "last_damage_at=CURRENT_TIMESTAMP",
-                    (target["id"], hp))
-        con.execute("INSERT INTO play_health (user_id, last_hit_at) "
-                    "VALUES (?, CURRENT_TIMESTAMP) ON CONFLICT(user_id)"
-                    " DO UPDATE SET last_hit_at=CURRENT_TIMESTAMP",
-                    (user["id"],))
+        con.execute("INSERT INTO play_chat (user_id, text) VALUES (?, ?)",
+                    (user["id"], "👋 waves at %s!" % target))
         con.commit()
-        self.send_json({"ok": True, "hp": hp, "ko": ko})
+        self.send_json({"ok": True})
 
     def do_play_move(self, con, user):
         if not user:
@@ -4994,13 +4854,13 @@ class Handler(BaseHTTPRequestHandler):
             controls = (
                 "<div style='background:#14524d;padding:8px;"
                 "box-sizing:border-box;border-top:4px solid #d4af37'>"
-                "<div id='fightmsg' style='font-size:14px;"
+                "<div id='sysmsg' style='font-size:14px;"
                 "min-height:18px;text-align:center;color:#fdf6e3'></div>"
+                "<div id='selpanel' style='display:none;font-size:14px;"
+                "text-align:center;color:#fdf6e3;padding:4px'></div>"
                 "<div style='text-align:center;display:flex;'"
                 "gap:8px;justify-content:center;flex-wrap:wrap'>"
-                "<button onclick='punchNearest()' "
-                "style='padding:10px 18px;font-size:18px'>🥊 Punch"
-                "</button><button onclick='pickup()' "
+                "<button onclick='pickup()' "
                 "style='padding:10px 18px;font-size:18px'>✋ Pick up"
                 "</button><span id='carried' "
                 "style='font-size:20px;align-self:center;color:#fdf6e3'"
@@ -5008,7 +4868,7 @@ class Handler(BaseHTTPRequestHandler):
                 "<form id='chatform' style='display:flex;gap:6px;"
                 "margin-top:6px'><input id='chatin' maxlength='200' "
                 "placeholder='Say something to the village…' "
-                "style='flex:1;padding:8px' autocomplete='off'>"
+                "style='flex:1;padding:12px;font-size:16px' autocomplete='off'>"
                 "<button>Send</button></form></div>")
         else:
             controls = (
@@ -5103,34 +4963,34 @@ class Handler(BaseHTTPRequestHandler):
                 "<a href='/me'>My Collection</a></span></div>"
                 "<div id='field' style='position:relative;flex:1;"
                 "min-height:0;overflow:hidden;touch-action:none;"
-                "background:linear-gradient(#bfe3ff 0 30%,#b7e39a "
+                "background:linear-gradient(#0d3b38 0 30%,#155e57 "
                 "30%);'>"
                 "<div style='position:absolute;left:0;right:0;top:33%;"
-                "border-top:2px dashed rgba(255,255,255,0.7)'></div>"
+                "border-top:2px dashed rgba(240,199,94,0.6)'></div>"
                 "<div style='position:absolute;left:0;right:0;top:66%;"
-                "border-top:2px dashed rgba(255,255,255,0.7)'></div>"
+                "border-top:2px dashed rgba(240,199,94,0.6)'></div>"
                 "<div style='position:absolute;left:8px;top:4px;"
-                "font-size:13px;background:rgba(255,255,255,0.7);"
+                "font-size:13px;background:#0d3b38;color:#f0c75e;"
                 "border-radius:8px;padding:1px 6px'>☁️ Windyworrors "
                 "village</div>"
                 "<div style='position:absolute;left:8px;top:36%;"
-                "font-size:13px;background:rgba(255,255,255,0.7);"
+                "font-size:13px;background:#0d3b38;color:#f0c75e;"
                 "border-radius:8px;padding:1px 6px'>🌊 "
                 "Waterliewaveminans village</div>"
                 "<div style='position:absolute;left:8px;top:69%;"
-                "font-size:13px;background:rgba(255,255,255,0.7);"
+                "font-size:13px;background:#0d3b38;color:#f0c75e;"
                 "border-radius:8px;padding:1px 6px'>🌲 Fortress "
                 "Rooted village</div>" + clouds + trees + rivers +
                 "<div id='players'></div><div id='items'></div>" + huts + "</div>"
                 "<div id='chatlog' style='max-height:64px;"
                 "overflow:auto;padding:6px 10px;font-size:13px;"
-                "background:#f5f5f5;border-top:1px solid #ccc'>"
+                "background:#0d3b38;border-top:4px solid #d4af37;color:#fdf6e3'>"
                 "</div>" + controls +
                 "<script>var CSRF='" + esc(self._csrf_token or "") + "';"
                 "var ME=" + json.dumps(me) + ";var POS=null;"
                 "function esc(s){return s.replace(/&/g,'&amp;')"
                 ".replace(/</g,'&lt;');}"
-                "function robotHTML(p){var c={Blues:'#2b5ea7',Browns:'#7a4a21',Reds:'#c0392b',Dummy:'#888'}[p.tribe]||'#2b5ea7';if(p.dummy){return \"<div style='font-size:60px;line-height:1'>🎯</div>\";}var tmp=document.createElement('div');tmp.innerHTML=p.avatar;var im=tmp.querySelector('img');var src=im?im.getAttribute('src'):'';var antenna=\"<div style='width:6px;height:14px;background:#333;margin:0 auto'></div><div style='width:14px;height:14px;background:#ffd700;border:2px solid #333;border-radius:50%;margin:0 auto'></div>\";var head=src?\"<img src='\"+src+\"' style='width:64px;height:64px;object-fit:cover;object-position:50% 22%;border:4px solid \"+c+\";border-radius:2px;display:block;margin:0 auto'>\":\"<div style='width:64px;height:64px;background:\"+c+\";border:4px solid #333;border-radius:2px;margin:0 auto;font-size:30px;line-height:64px'>🧸</div>\";return \"<div style='width:76px;margin:0 auto'>\"+antenna+head+\"<div style='width:52px;height:40px;background:\"+c+\";border:3px solid #333;border-radius:6px;margin:2px auto 0;position:relative'><span style='position:absolute;left:8px;top:8px;color:#ffd700'>✦</span><span style='position:absolute;left:22px;top:15px;color:#ffd700'>✦</span><span style='position:absolute;left:34px;top:6px;color:#ffd700'>✦</span><span class='arm arm-l' style='position:absolute;left:-13px;top:4px;width:10px;height:28px;background:#333;border-radius:3px'></span><span class='arm arm-r' style='position:absolute;right:-13px;top:4px;width:10px;height:28px;background:#333;border-radius:3px'></span></div><div style='display:flex;justify-content:center;gap:14px'><div class='leg leg-l' style='width:13px;height:22px;background:#333;border-radius:3px'></div><div class='leg leg-r' style='width:13px;height:22px;background:#333;border-radius:3px'></div></div></div>\";}"
+                "function robotHTML(p){var c={Blues:'#2b5ea7',Browns:'#7a4a21',Reds:'#c0392b'}[p.tribe]||'#2b5ea7';var tmp=document.createElement('div');tmp.innerHTML=p.avatar;var im=tmp.querySelector('img');var src=im?im.getAttribute('src'):'';var antenna=\"<div style='width:5px;height:10px;background:#333;margin:0 auto'></div><div style='width:10px;height:10px;background:#ffd700;border:2px solid #333;border-radius:50%;margin:0 auto'></div>\";var head=src?\"<img src='\"+src+\"' style='width:44px;height:44px;object-fit:cover;object-position:50% 22%;border:3px solid \"+c+\";border-radius:2px;display:block;margin:0 auto'>\":\"<div style='width:44px;height:44px;background:\"+c+\";border:3px solid #333;border-radius:2px;margin:0 auto;font-size:24px;line-height:44px'>🧸</div>\";return \"<div style='width:52px;margin:0 auto'>\"+antenna+head+\"<div style='width:38px;height:28px;background:\"+c+\";border:3px solid #333;border-radius:6px;margin:2px auto 0;position:relative'><span style='position:absolute;left:5px;top:6px;color:#ffd700'>✦</span><span style='position:absolute;left:15px;top:11px;color:#ffd700'>✦</span><span style='position:absolute;left:25px;top:4px;color:#ffd700'>✦</span><span class='arm arm-l' style='position:absolute;left:-10px;top:3px;width:8px;height:20px;background:#333;border-radius:3px'></span><span class='arm arm-r' style='position:absolute;right:-10px;top:3px;width:8px;height:20px;background:#333;border-radius:3px'></span></div><div style='display:flex;justify-content:center;gap:8px'><div class='leg leg-l' style='width:10px;height:16px;background:#333;border-radius:3px'></div><div class='leg leg-r' style='width:10px;height:16px;background:#333;border-radius:3px'></div></div></div>\";}"
 "function render(st){window._ST=st;var h='';"
                 "st.players.forEach(function(p,i){"
                 "if(p.you&&!POS){POS={x:p.x,y:p.y};}"
@@ -5144,27 +5004,10 @@ class Handler(BaseHTTPRequestHandler):
                 "window._LAST[p.username]=[p.x,p.y];"
                 "var dot=p.online?\"<span style='color:green'>●"
                 "</span>\":\"<span style='color:#888'>●</span>\";"
-                "var bub=p.bubble?\"<div style='background:white;"
+                "var bub=p.bubble?\"<div style='background:#fdf6e3;border:2px solid #d4af37;"
                 "border-radius:10px;padding:4px 8px;font-size:13px;"
                 "max-width:160px'>\"+esc(p.bubble)+\"</div>\":'';"
-                'h+="<div "+(p.you?"id=\'me-ava\' ":"")+"class=\'"+((moved?"walking":"idle")+(p.username===window._SHAKE?" shaking":"")+(p.username===window._LUNGE?" lunging":""))+"\' '
-                "style='position:absolute;transition:left .6s steps(4),"
-                "top .6s steps(4);left:\"+p.x+\"%;"
-                "top:\"+p.y+\"%;transform:translate(-50%,-50%);"
-                "text-align:center'>\"+(p.username===window._BURST?\"<div style='font-size:28px'>💥</div>\":'')+bub+\"<div>\"+robotHTML(p)+\"</div>"
-                "<div style='background:rgba(255,255,255,0.85);"
-                "border-radius:8px;padding:1px 6px;font-size:13px'>"
-                "\"+dot+\"<a href='/shelf/\"+encodeURIComponent("
-                "p.username)+\"'>\"+esc(p.username)+\"</a>\"+(p.you?"
-                "' (You)':'')+\"</div>"
-                "<div style='width:64px;height:8px;background:#ddd;"
-                "border-radius:4px;margin:2px auto'><div style='"
-                "width:\"+p.hp+\"%;height:8px;background:\"+(p.hp>30?"
-                "\"green\":\"red\")+\";border-radius:4px'></div></div>"
-                "\"+(ME&&!p.you?\"<button onclick='hitIdx(\"+i+\")' "
-                "style='padding:4px 8px;font-size:14px'>🥊 Fight"
-                "</button>\":'')+\"</div>\";});"
-                "window._SHAKE=null;window._LUNGE=null;window._BURST=null;"
+                "h+=\"<div \"+(p.you?\"id='me-ava' \":\"\")+\"data-pname='\"+esc(p.username)+\"' class='\"+(moved?\"walking\":\"idle\")+\"' style='position:absolute;transition:left .6s linear,top .6s linear;left:\"+p.x+\"%;top:\"+p.y+\"%;transform:translate(-50%,-50%);text-align:center'>\"+bub+\"<div>\"+robotHTML(p)+\"</div><div style='background:#fdf6e3;border:2px solid #d4af37;border-radius:8px;padding:1px 6px;font-size:11px'>\"+dot+\"<a href='/shelf/\"+encodeURIComponent(p.username)+\"'>\"+esc(p.username)+\"</a>\"+(p.you?\" (You)\":\"\")+\"</div></div>\";});"
                 "document.getElementById('players').innerHTML=h;"
                 "document.getElementById('items').innerHTML="
                 "(st.items||[]).map(function(it){return \"<div "
@@ -5184,23 +5027,10 @@ class Handler(BaseHTTPRequestHandler):
                 "var f=new URLSearchParams();f.append('csrf_token',"
                 "CSRF);f.append('x',POS.x);f.append('y',POS.y);"
                 "fetch('/play_move',{method:'POST',body:f});poll();}"
-                "function hitIdx(i){var p=window._ST.players[i];"
-                "if(!p){return;}"
-                "var f=new URLSearchParams();f.append('csrf_token',"
-                "CSRF);f.append('target',p.dummy?'__dummy__':p.username);"
-                "fetch('/play_hit',{method:'POST',body:f}).then("
-                "function(r){return r.json();}).then(function(d){"
-                "var m=document.getElementById('fightmsg');"
-                "if(!d.ok){m.textContent=d.error==='too_far'?"
-                "'Walk closer first — you have to be near them to "
-                "fight!':d.error==='too_fast'?'Wait a second between "
-                "hits!':d.error==='away'?'They are away right now.'"
-                ":'Could not fight.';}"
-                "else{m.textContent=d.ko?('You knocked out '+"
-                "p.username+'!'):('You hit '+p.username+' — '+d.hp+"
-                "' health left.');window._SHAKE=p.username;window._LUNGE=ME;window._BURST=p.username;}poll();});}"
-                "function punchNearest(){if(!ME||!POS){return;}var best=-1;var bd=1e9;window._ST.players.forEach(function(p,i){if(p.you){return;}var dx=Math.abs(p.x-POS.x);var dy=Math.abs(p.y-POS.y);if(dx<=15&&dy<=15&&dx+dy<bd){bd=dx+dy;best=i;}});if(best<0){var m=document.getElementById('fightmsg');m.textContent='Nobody close enough to punch — walk up to someone or the practice dummy.';return;}hitIdx(best);}"
-                "function pickup(){if(!ME){return;}var f=new URLSearchParams();f.append('csrf_token',CSRF);fetch('/pickup',{method:'POST',body:f}).then(function(r){return r.json();}).then(function(d){var m=document.getElementById('fightmsg');if(!d.ok){m.textContent='Nothing close enough to pick up — walk up to a flower, ball, or star.';}else{m.textContent='You picked up '+d.kind+'!';}poll();});}"
+                "function pickup(){if(!ME){return;}var f=new URLSearchParams();f.append('csrf_token',CSRF);fetch('/pickup',{method:'POST',body:f}).then(function(r){return r.json();}).then(function(d){var m=document.getElementById('sysmsg');if(!d.ok){m.textContent='Nothing close enough to pick up — walk up to a flower, ball, or star.';}else{m.textContent='You picked up '+d.kind+'!';}poll();});}"
+                "function wave(n){var f=new URLSearchParams();f.append('csrf_token',CSRF);f.append('target',n);fetch('/play_wave',{method:'POST',body:f}).then(function(){poll();});}"
+                "function talkTo(n){var inp=document.getElementById('chatin');if(inp){inp.value='@'+n+' ';inp.focus();}}"
+                "function pickSel(t){var pn=t?t.closest('[data-pname]'):null;var sp=document.getElementById('selpanel');if(!sp){return;}if(pn){var n=pn.getAttribute('data-pname');if(n===ME){sp.style.display='none';return;}sp.style.display='block';sp.innerHTML='<b>'+esc(n)+'</b> <button onclick=\"wave(\\''+n+'\\')\">👋 Wave</button> <button onclick=\"talkTo(\\''+n+'\\')\">💬 Talk</button> <a href=\"/shelf/'+encodeURIComponent(n)+'\">Visit shelf</a> <a href=\"/trading\">Trade</a>';}else{sp.style.display='none';}}"
                 "document.addEventListener('keydown',function(e){"
                 "if(document.activeElement&&document.activeElement"
                 ".id==='chatin'){return;}"
@@ -5228,9 +5058,9 @@ class Handler(BaseHTTPRequestHandler):
                 "goTo(t.clientX,t.clientY);e.preventDefault();},"
                 "{passive:false});"
                 "fld.addEventListener('touchend',function(e){"
-                "goTo(lastTX,lastTY,true);});"
+                "goTo(lastTX,lastTY,true);pickSel(e.target);});"
                 "fld.addEventListener('click',function(e){"
-                "if(e.target.closest('button')){return;}goTo(e.clientX,e.clientY);});"
+                "if(e.target.closest('button')){return;}goTo(e.clientX,e.clientY);pickSel(e.target);});"
                 "var cf=document.getElementById('chatform');"
                 "if(cf){cf.addEventListener('submit',function(e){"
                 "e.preventDefault();var inp=document.getElementById"

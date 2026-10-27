@@ -3073,58 +3073,30 @@ def main():
             s, refused = post(anon, "/play_move",
                               {"x": "10", "y": "10"}, base=pbase)
             check("logged-out move is refused", s == 403)
-            # (n) Play fights: walk up, hit, health, knockout.
-            check("live page carries the fight script",
-                  "hitIdx" in live and "🥊 Fight" in live)
-            post(sh, "/play_move", {"x": "50", "y": "50"}, base=pbase)
-            post(sh2, "/play_move", {"x": "52", "y": "52"},
-                 base=pbase)
-            s, hit = post(sh, "/play_hit", {"target": "shelfy2"},
-                          base=pbase)
-            check("nearby hit lands for 10 damage",
-                  s == 200 and '"hp": 90' in hit)
-            post(sh2, "/play_move", {"x": "90", "y": "90"},
-                 base=pbase)
-            s, far = post(sh, "/play_hit", {"target": "shelfy2"},
-                          base=pbase)
-            check("far-away hit is refused",
-                  s == 400 and "too_far" in far)
-            s, selfhit = post(sh, "/play_hit", {"target": "shelfy"},
+            # (n) Social field: waves, no fights.
+            check("live page carries no fight script",
+                  "hitIdx" not in live and "🥊 Fight" not in live
+                  and "punchNearest" not in live
+                  and "Practice Dummy" not in live)
+            s, waved = post(sh, "/play_wave", {"target": "shelfy2"},
+                            base=pbase)
+            check("waving at another player works",
+                  s == 200 and json.loads(waved).get("ok") is True)
+            s, wstate = get(sh2, "/play_state", base=pbase)
+            check("wave shows as a chat line",
+                  "waves at shelfy2" in wstate)
+            s, selfwave = post(sh, "/play_wave", {"target": "shelfy"},
+                               base=pbase)
+            check("waving at yourself is refused", s == 400)
+            s, anonwave = post(anon, "/play_wave", {"target": "shelfy2"},
+                               base=pbase)
+            check("logged-out wave is refused", s == 403)
+            s, badwave = post(sh, "/play_wave", {"target": "nobody"},
                               base=pbase)
-            check("hitting yourself is refused",
-                  s == 400 and "self" in selfhit)
-            s, anonhit = post(anon, "/play_hit", {"target": "shelfy2"},
-                              base=pbase)
-            check("logged-out hit is refused", s == 403)
-            pdb2 = sqlite3.connect(pdb)
-            pdb2.execute("UPDATE play_health SET last_hit_at="
-                         "'2000-01-01 00:00:00' WHERE user_id IN "
-                         "(SELECT id FROM users WHERE username="
-                         "'shelfy')")
-            pdb2.commit()
-            post(sh2, "/play_move", {"x": "52", "y": "52"},
-                 base=pbase)
-            s, hit2 = post(sh, "/play_hit", {"target": "shelfy2"},
-                           base=pbase)
-            check("second hit lands after cooldown reset",
-                  s == 200 and '"hp": 80' in hit2)
-            s, fast = post(sh, "/play_hit", {"target": "shelfy2"},
-                           base=pbase)
-            check("rapid repeat hit is refused",
-                  s == 400 and "too_fast" in fast)
-            for _ in range(8):
-                pdb2.execute("UPDATE play_health SET last_hit_at="
-                             "'2000-01-01 00:00:00' WHERE user_id IN "
-                             "(SELECT id FROM users WHERE username="
-                             "'shelfy')")
-                pdb2.commit()
-                post(sh, "/play_hit", {"target": "shelfy2"},
-                     base=pbase)
-            s, state2 = get(sh2, "/play_state", base=pbase)
-            check("knockout respawns at full health and is announced",
-                  '"hp": 100' in state2
-                  and "knocked out" in state2)
-            pdb2.close()
+            check("waving at an unknown player is refused", s == 404)
+            s, oldhit = post(sh, "/play_hit", {"target": "shelfy2"},
+                             base=pbase)
+            check("old fight route is gone", s == 404)
             # (o) Tribe villages, touch-to-move, trading room.
             check("live page has touch controls, photo babies and "
                   "villages",
@@ -3180,25 +3152,32 @@ def main():
             check("live world carries the popup banner slot",
                   "popup-banner" in liveb)
             # (q) Robot babies with photo faces, punch + pick up.
-            check("live page builds blocky robots with photo faces",
+            check("live page builds small blocky robots with photo faces",
                   "walkerSVG" not in liveb and "robotHTML" in liveb
                   and "leg leg-l" in liveb and "arm arm-l" in liveb
                   and "antenna" in liveb and "robostep" in liveb
-                  and "p.avatar" in liveb and "me-ava" in liveb)
+                  and "p.avatar" in liveb and "me-ava" in liveb
+                  and "44px;height:44px" in liveb
+                  and "64px;height:64px" not in liveb)
             check("fight grounds have blocky trees, rivers and huts",
                   "#1e7a34" in liveb and "#3b82f6" in liveb
                   and "hide here" in liveb
-                  and "butterfly" not in liveb)
+                  and "butterfly" not in liveb
+                  and "linear-gradient(#0d3b38 0 30%,#155e57 30%)" in liveb)
             check("taps on characters are no longer ignored",
                   "closest('#players')" not in liveb)
             check("live page has no arrow buttons",
                   "⬆️" not in liveb and "⬇️" not in liveb)
             s, live_signed = get(sh, "/live", base=pbase)
-            check("live page has punch and pick up buttons",
-                  "punchNearest" in live_signed
-                  and "🥊 Punch" in live_signed
+            check("live page has pick up but no punch button",
+                  "punchNearest" not in live_signed
+                  and "🥊 Punch" not in live_signed
                   and "pickup()" in live_signed
                   and "✋ Pick up" in live_signed)
+            check("live page has a tap-a-character action panel",
+                  "selpanel" in live_signed and "Wave" in live_signed
+                  and "Visit shelf" in live_signed
+                  and "play_wave" in live_signed)
             check("live page uses promo teal and gold",
                   "#0d3b38" in liveb and "#d4af37" in liveb)
             check("trading shelf uses promo teal and gold",
@@ -3226,33 +3205,11 @@ def main():
             s, dstate = get(anon, "/play_state", base=pbase)
             dplayers = {p["username"]: p
                         for p in json.loads(dstate)["players"]}
-            check("state carries tribes and a practice dummy",
+            check("state carries tribes and no practice dummy",
                   dplayers["villager"]["tribe"] == "Browns"
-                  and "Practice Dummy" in dplayers
-                  and dplayers["Practice Dummy"]["dummy"] is True)
-            post(sh, "/play_move", {"x": "50", "y": "45"}, base=pbase)
-            pdb5 = sqlite3.connect(pdb)
-            pdb5.execute("UPDATE play_health SET last_hit_at="
-                         "'2000-01-01 00:00:00' WHERE user_id IN "
-                         "(SELECT id FROM users WHERE username="
-                         "'shelfy')")
-            pdb5.commit()
-            s, dhit = post(sh, "/play_hit", {"target": "__dummy__"},
-                           base=pbase)
-            check("practice dummy takes 10 damage",
-                  s == 200 and '"hp": 90' in dhit)
-            for _ in range(9):
-                pdb5.execute("UPDATE play_health SET last_hit_at="
-                             "'2000-01-01 00:00:00' WHERE user_id IN "
-                             "(SELECT id FROM users WHERE username="
-                             "'shelfy')")
-                pdb5.commit()
-                post(sh, "/play_hit", {"target": "__dummy__"},
-                     base=pbase)
-            s, dstate2 = get(sh2, "/play_state", base=pbase)
-            check("dummy knockout respawns and is announced",
-                  "practice dummy" in dstate2)
-            pdb5.close()
+                  and "Practice Dummy" not in dplayers
+                  and not any(p.get("dummy") for p in
+                              json.loads(dstate)["players"]))
             pcongs.close()
             pcong4.close()
             pcong5.close()
