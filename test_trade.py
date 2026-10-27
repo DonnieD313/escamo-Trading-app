@@ -2379,12 +2379,14 @@ def main():
                        "/buy_leader_stripe", "/buy_god",
                        "/buy_god_stripe", "/buy_points",
                        "/buy_points_stripe", "/buy_popup",
-                       "/buy_popup_stripe", "/claim_gift"}
-            check("shop forms are money routes or the free gift only",
+                       "/buy_popup_stripe", "/buy_popup_points",
+                       "/claim_gift"}
+            check("shop forms are money routes, the free gift, or "
+                  "the points freebie only",
                   actions <= allowed, "actions=%s" % sorted(actions))
-            check("shop offers no pay-with-points button",
-                  "Buy with points" not in shop4
-                  and "pay with points" not in shop4.lower())
+            check("shop offers pay-with-points only on the freebie",
+                  "Buy with 120 points" in shop4
+                  and shop4.count("Buy with") == 1)
             # (b) Trade points BURN: offered points leave the giver
             # and reach nobody; each trader still gets the +20 award.
             giver = http.cookiejar.CookieJar()
@@ -2734,6 +2736,171 @@ def main():
                   and pglate2["status"] == "pending"
                   and c1["points"] == 50 and c2["points"] == 700,
                   "gift1=%d gift2=%d" % (c1["points"], c2["points"]))
+            # (g) Points freebies, even swaps, and the points market.
+            fb = http.cookiejar.CookieJar()
+            ms = http.cookiejar.CookieJar()
+            mb = http.cookiejar.CookieJar()
+            s, _ = signup_full(fb, "freebie", "secret9",
+                               tribe="Blues", roster="Coral", base=pbase)
+            s, _ = signup_full(ms, "mseller", "secret9",
+                               tribe="Browns", roster="Fern", base=pbase)
+            s, _ = signup_full(mb, "mbuyer", "secret9",
+                               tribe="Reds", roster="Ember", base=pbase)
+            pcong4 = sqlite3.connect(pdb)
+            pcong4.row_factory = sqlite3.Row
+            fb_row = pcong4.execute(
+                "SELECT * FROM users WHERE username='freebie'").fetchone()
+            ms_row = pcong4.execute(
+                "SELECT * FROM users WHERE username='mseller'").fetchone()
+            mb_row = pcong4.execute(
+                "SELECT * FROM users WHERE username='mbuyer'").fetchone()
+            # The weekly drifter is the points freebie (120 points).
+            s, shopg = get(fb, "/shop", base=pbase)
+            drift = pcong4.execute(
+                "SELECT * FROM popup_items WHERE tier='drifter' AND "
+                "stock>0 ORDER BY id DESC").fetchone()
+            check("weekly drifter carries a 120-point freebie price",
+                  drift is not None and drift["points_price"] == 120
+                  and "Buy with 120 points" in shopg)
+            s, _ = post(fb, "/buy_popup_points",
+                        {"popup_id": drift["id"]}, base=pbase)
+            pcong5 = sqlite3.connect(pdb)
+            pcong5.row_factory = sqlite3.Row
+            fb2 = pcong5.execute(
+                "SELECT * FROM users WHERE username='freebie'").fetchone()
+            fbb = pcong5.execute(
+                "SELECT COUNT(*) FROM babies WHERE owner_id=?",
+                (fb_row["id"],)).fetchone()[0]
+            drift2 = pcong5.execute(
+                "SELECT * FROM popup_items WHERE id=?",
+                (drift["id"],)).fetchone()
+            check("freebie buy spends 120 points, grants the baby",
+                  fb2["points"] == 480 and fb2["points_earned"] == 0
+                  and fbb == 2 and drift2["stock"] == 0,
+                  "points=%d babies=%d" % (fb2["points"], fbb))
+            s, resp_gone = post(ms, "/buy_popup_points",
+                                {"popup_id": drift["id"]}, base=pbase)
+            check("sold-out freebie refuses a second points buy",
+                  "not available for points" in resp_gone)
+            # Even swap: seller puts a baby up, buyer offers a baby
+            # and 0 points, seller accepts — babies swap, free.
+            ms_baby = pcong5.execute(
+                "SELECT * FROM babies WHERE owner_id=?",
+                (ms_row["id"],)).fetchone()
+            mb_baby = pcong5.execute(
+                "SELECT * FROM babies WHERE owner_id=?",
+                (mb_row["id"],)).fetchone()
+            s, _ = post(ms, "/toggle_trade",
+                        {"baby_id": ms_baby["id"]}, base=pbase)
+            s, _ = post(mb, "/offer",
+                        {"wanted_baby_id": ms_baby["id"],
+                         "offered_baby_id": mb_baby["id"],
+                         "offered_points": "0"}, base=pbase)
+            ev = pcong5.execute(
+                "SELECT * FROM offers WHERE from_user=? AND to_user=? "
+                "AND status='pending'",
+                (mb_row["id"], ms_row["id"])).fetchone()
+            check("even-swap offer recorded", ev is not None)
+            s, off_html = get(ms, "/offers", base=pbase)
+            check("offers page tags a 0-point baby offer as an even "
+                  "swap", "Even swap" in off_html)
+            s, _ = post(ms, "/offer_action",
+                        {"offer_id": ev["id"], "action": "accept"},
+                        base=pbase)
+            pcong6 = sqlite3.connect(pdb)
+            pcong6.row_factory = sqlite3.Row
+            ms_baby2 = pcong6.execute(
+                "SELECT * FROM babies WHERE id=?",
+                (ms_baby["id"],)).fetchone()
+            mb_baby2 = pcong6.execute(
+                "SELECT * FROM babies WHERE id=?",
+                (mb_baby["id"],)).fetchone()
+            ms2 = pcong6.execute(
+                "SELECT * FROM users WHERE username='mseller'").fetchone()
+            mb2 = pcong6.execute(
+                "SELECT * FROM users WHERE username='mbuyer'").fetchone()
+            check("even swap swaps owners and awards +20 each",
+                  ms_baby2["owner_id"] == mb_row["id"]
+                  and mb_baby2["owner_id"] == ms_row["id"]
+                  and ms2["points"] == 620 and mb2["points"] == 620
+                  and ms2["points_earned"] == 20
+                  and mb2["points_earned"] == 20,
+                  "ms=%d mb=%d" % (ms2["points"], mb2["points"]))
+            # Points market: buyer (mb) lists the baby just received
+            # in the swap for 200 points; freebie buyer (fb, 480
+            # points) buys it.
+            s, _ = post(mb, "/points_list",
+                        {"baby_id": ms_baby2["id"],
+                         "points_price": "200"}, base=pbase)
+            lst = pcong6.execute(
+                "SELECT * FROM points_listings WHERE seller_id=? AND "
+                "status='pending'",
+                (mb_row["id"],)).fetchone()
+            check("points listing recorded", lst is not None
+                  and lst["points"] == 200)
+            s, market_html = get(fb, "/points_market", base=pbase)
+            check("points market shows the listing",
+                  "200 points" in market_html)
+            s, _ = post(fb, "/points_buy",
+                        {"listing_id": lst["id"]}, base=pbase)
+            pcong7 = sqlite3.connect(pdb)
+            pcong7.row_factory = sqlite3.Row
+            fb3 = pcong7.execute(
+                "SELECT * FROM users WHERE username='freebie'").fetchone()
+            mb3 = pcong7.execute(
+                "SELECT * FROM users WHERE username='mbuyer'").fetchone()
+            sold_baby = pcong7.execute(
+                "SELECT * FROM babies WHERE id=?",
+                (ms_baby2["id"],)).fetchone()
+            lst2 = pcong7.execute(
+                "SELECT * FROM points_listings WHERE id=?",
+                (lst["id"],)).fetchone()
+            check("points sale moves points buyer to seller, baby "
+                  "changes owner",
+                  fb3["points"] == 280 and mb3["points"] == 820
+                  and mb3["points_earned"] == 20
+                  and sold_baby["owner_id"] == fb_row["id"]
+                  and lst2["status"] == "sold",
+                  "fb=%d mb=%d" % (fb3["points"], mb3["points"]))
+            # Refusals: own listing, and cancel keeps the baby.
+            # (ms still holds the Ember baby received in the swap.)
+            s, _ = post(ms, "/points_list",
+                        {"baby_id": mb_baby2["id"],
+                         "points_price": "50"}, base=pbase)
+            own = pcong7.execute(
+                "SELECT * FROM points_listings WHERE seller_id=? AND "
+                "status='pending'",
+                (ms_row["id"],)).fetchone()
+            s, resp_own = post(ms, "/points_buy",
+                               {"listing_id": own["id"]}, base=pbase)
+            check("buying your own listing refused",
+                  "your own" in resp_own)
+            s, _ = post(ms, "/points_list",
+                        {"baby_id": mb_baby2["id"],
+                         "points_price": "9999"}, base=pbase)
+            check("second listing for same baby refused",
+                  pcong7.execute(
+                      "SELECT COUNT(*) FROM points_listings WHERE "
+                      "baby_id=? AND status='pending'",
+                      (mb_baby2["id"],)).fetchone()[0] == 1)
+            s, _ = post(ms, "/points_cancel",
+                        {"listing_id": own["id"]}, base=pbase)
+            pcong8 = sqlite3.connect(pdb)
+            pcong8.row_factory = sqlite3.Row
+            own2 = pcong8.execute(
+                "SELECT * FROM points_listings WHERE id=?",
+                (own["id"],)).fetchone()
+            keep = pcong8.execute(
+                "SELECT * FROM babies WHERE id=?",
+                (mb_baby2["id"],)).fetchone()
+            check("cancelling a listing keeps the baby with the seller",
+                  own2["status"] == "cancelled"
+                  and keep["owner_id"] == ms_row["id"])
+            pcong4.close()
+            pcong5.close()
+            pcong6.close()
+            pcong7.close()
+            pcong8.close()
             pcong.close()
             pcong2.close()
             pcong3.close()

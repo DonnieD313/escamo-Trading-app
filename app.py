@@ -300,6 +300,9 @@ SPECIAL_EDITION = 25
 PRICE_RARE = "9.99"
 RARE_EDITION = 8
 PRICE_SHADOW = "10.00"
+# Points price of the weekly drifter freebie: a drifter costs $1.99 in
+# money, and points packs run about 60 points per $1, so 120 points.
+FREEBIE_POINTS = 120
 POINTS_PACK_PRICES = {n: p for n, p in POINTS_PACKS}
 
 # ---------------------------------------------------------------- PayPal
@@ -759,6 +762,26 @@ def init_db():
             con.execute("ALTER TABLE popup_items ADD COLUMN %s %s"
                         % (col, ddl))
     con.execute("UPDATE popup_items SET stock=0 WHERE sold=1")
+    # Migration for points freebies + the points market: popup_items
+    # gains a points price (0 = money only; the weekly drifter is the
+    # points freebie), and points_listings holds player-to-player
+    # sales priced in points.
+    popup_cols = [r[1] for r in
+                  con.execute("PRAGMA table_info(popup_items)").fetchall()]
+    if "points_price" not in popup_cols:
+        con.execute("ALTER TABLE popup_items ADD COLUMN points_price "
+                    "INTEGER DEFAULT 0")
+    con.execute("UPDATE popup_items SET points_price=? WHERE tier="
+                "'drifter'", (FREEBIE_POINTS,))
+    con.execute("""
+    CREATE TABLE IF NOT EXISTS points_listings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        baby_id INTEGER NOT NULL REFERENCES babies(id),
+        seller_id INTEGER NOT NULL REFERENCES users(id),
+        points INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )""")
     # Migration for the tribe renames: rewrite old tribe names in the
     # Notices board so no user-facing page still shows them.
     for old, new in (("Blacks", "Shadows"),
@@ -1114,10 +1137,10 @@ def ensure_weekly_popup(con):
     name = STARTERS[tribe]["names"][iso_week % len(STARTERS[tribe]["names"])]
     con.execute(
         "INSERT INTO popup_items (cert, name, tribe, hoodie_pattern,"
-        " stones, face, price, tier, stock, total)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?)",
+        " stones, face, price, tier, stock, total, points_price)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (cert, name, tribe, pattern, stones, popup_face(tribe, iso_week),
-         PRICE_INDIVIDUAL, "drifter", 1, 1))
+         PRICE_INDIVIDUAL, "drifter", 1, 1, FREEBIE_POINTS))
     add_notice(con, "A new %s drifter popped up in the Shop — %s with "
                "%s, found %s." % (tribe_display(tribe), pattern, stones,
                                   POPUP_FOUND.get(tribe, "somewhere new")))
@@ -1300,6 +1323,7 @@ def page(title, body, user=None):
                "<a href='/browse'>Trade Board</a> | "
                "<a href='/offers'>Offers</a> | "
                "<a href='/gifts'>Gifts</a> | "
+               "<a href='/points_market'>Points Market</a> | "
                "<a href='/shop'>Shop</a> | "
                "<a href='/purchases'>Purchases</a> | "
                "<a href='/world'>World</a> | "
@@ -1829,6 +1853,12 @@ def popup_shop_section(con, cert, heading, user):
                 "Cash App Pay</button></form>"
                 % (item["id"], item["price"],
                    item["id"], item["price"]))
+        if item["points_price"]:
+            out += ("<form method='post' action='/buy_popup_points'>"
+                    "<input type='hidden' name='popup_id' "
+                    "value='%d'><button>Buy with %d points "
+                    "(freebie — no money)</button></form>"
+                    % (item["id"], item["points_price"]))
     else:
         out += "<p><a href='/login'>Log in</a> to buy.</p>"
     return out
@@ -1989,6 +2019,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.offers(con, user)
             elif path == "/gifts":
                 self.gifts(con, user, query)
+            elif path == "/points_market":
+                self.points_market(con, user)
             elif path == "/world":
                 self.world(con, user)
             elif path == "/notices":
@@ -2066,6 +2098,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.do_buy_popup(con, user)
             elif path == "/buy_popup_stripe":
                 self.do_buy_popup_stripe(con, user)
+            elif path == "/buy_popup_points":
+                self.do_buy_popup_points(con, user)
+            elif path == "/points_list":
+                self.do_points_list(con, user)
+            elif path == "/points_buy":
+                self.do_points_buy(con, user)
+            elif path == "/points_cancel":
+                self.do_points_cancel(con, user)
             elif path == "/claim_gift":
                 self.do_claim_gift(con, user)
             elif path == "/choice_baby":
@@ -2656,8 +2696,7 @@ class Handler(BaseHTTPRequestHandler):
                  "someone can join and trade with you:<br>"
                  "<code>/signup?invite=%s</code></p>" % (
                      esc(user["invite_code"]), esc(user["invite_code"])))
-        # Pending points gifts for this player — gifts are the only
-        # way points move between players.
+        # Pending points gifts for this player.
         pending_gifts = con.execute(
             "SELECT point_gifts.*, users.username AS sender FROM "
             "point_gifts JOIN users ON users.id = point_gifts.from_user "
@@ -2683,8 +2722,8 @@ class Handler(BaseHTTPRequestHandler):
                          % (esc(g["sender"]), g["points"], g["id"],
                             g["id"]))
         body += ("<p><a href='/gifts'>Send or manage points gifts</a> — "
-                 "gifts are the only way points move between "
-                 "players.</p>")
+                 "points move between players by gift or by a "
+                 "points-market sale.</p>")
         if query.get("msg"):
             body += "<p class='ok'>%s</p>" % esc(query["msg"][0])
         owned = user_owned_tribes(con, user["id"])
@@ -2694,6 +2733,10 @@ class Handler(BaseHTTPRequestHandler):
                      "if you trade the leader away, ownership passes "
                      "to the new holder.</p>" % esc(tribe_display(tribe)))
         body += "<h2>My hoodie babies (%d)</h2>" % len(babies)
+        listed = {r["baby_id"]: r["points"] for r in con.execute(
+            "SELECT baby_id, points FROM points_listings WHERE "
+            "seller_id=? AND status='pending'",
+            (user["id"],)).fetchall()}
         for b in babies:
             body += baby_card(b)
             body += ("<form method='post' action='/toggle_trade'>"
@@ -2701,6 +2744,17 @@ class Handler(BaseHTTPRequestHandler):
                      "<button>%s</button></form>"
                      % (b["id"], "Remove from trade board"
                         if b["for_trade"] else "Put up for trade"))
+            if b["id"] in listed:
+                body += ("<p>Listed in the Points Market for "
+                         "<b>%d points</b>.</p>" % listed[b["id"]])
+            else:
+                body += ("<form method='post' action='/points_list'>"
+                         "<input type='hidden' name='baby_id' "
+                         "value='%d'>Price in points: "
+                         "<input type='number' name='points_price' "
+                         "min='1' required> "
+                         "<button>List for points</button></form>"
+                         % b["id"])
         self.send_html(page("My Collection", body, user))
 
     def do_toggle(self, con, user):
@@ -2728,7 +2782,10 @@ class Handler(BaseHTTPRequestHandler):
         cap = trade_cap(con, user["id"])
         body = ("<p>Tap a baby to make an offer for it. Your trade "
                 "slots: at most <b>%d</b> pending offer(s) at once "
-                "(regular 1, leader owner 2, god owner 5).</p>" % cap)
+                "(regular 1, leader owner 2, god owner 5).</p>"
+                "<p><b>Even swap — free:</b> offer one of your babies "
+                "and 0 points. If the other player agrees, you swap "
+                "babies and no points are spent.</p>" % cap)
         if not rows:
             body += "<p>No babies are up for trade right now.</p>"
         for b in rows:
@@ -2832,11 +2889,13 @@ class Handler(BaseHTTPRequestHandler):
                              "%s</div>" % (
                                  baby_img_html(ob, 72) if ob else "",
                                  baby_img_html(wb, 72) if wb else ""))
-            text = ("<div class='card'>%sFrom <b>%s</b> to <b>%s</b> — "
+            even_tag = ("<span class='tag'>Even swap — free</span> "
+                        if ob and o["offered_points"] == 0 else "")
+            text = ("<div class='card'>%s%sFrom <b>%s</b> to <b>%s</b> — "
                     "offers %s + %d points (spent on completion — they "
                     "drop off, the other player does not receive them) "
                     "for %s (status: %s)</div>" % (
-                        portraits,
+                        even_tag, portraits,
                         esc(users.get(o["from_user"], "?")),
                         esc(users.get(o["to_user"], "?")),
                         ("%s %s (%s)" % (esc(ob["name"]),
@@ -2945,7 +3004,7 @@ class Handler(BaseHTTPRequestHandler):
                     con.commit()
         self.redirect("/offers")
 
-    # -- points gifts: the ONLY way points move between players --
+    # -- points gifts (points also move in points-market sales) --
     def gifts(self, con, user, query, err=""):
         if self.need_login(user):
             return
@@ -2953,8 +3012,9 @@ class Handler(BaseHTTPRequestHandler):
                            (user["id"],)).fetchone()
         users = {u["id"]: u["username"] for u in
                  con.execute("SELECT id, username FROM users").fetchall()}
-        body = ("<p>Points gifts are the <b>only</b> way points move "
-                "from one player to another. Points you offer in a "
+        body = ("<p>Points gifts move points from one player to "
+                "another (a points-market sale does too). Points you "
+                "offer in a "
                 "trade are spent — they drop off when the trade "
                 "completes and the other player does not receive "
                 "them. A gift, on the other hand, moves points from "
@@ -3088,7 +3148,9 @@ class Handler(BaseHTTPRequestHandler):
         """Swap the babies, burn offered points, award 20 points to each
         trader (60 points to the buyer when the trade is for a Shadow).
         Offered points are deducted from the offerer and NOBODY receives
-        them — they drop off. Points only move between players as gifts."""
+        them — they drop off. An offer of a baby with 0 points is an
+        even swap: free, no points spent. Points move between players
+        as gifts or points-market sales."""
         sender = con.execute("SELECT * FROM users WHERE id=?",
                              (o["from_user"],)).fetchone()
         receiver = con.execute("SELECT * FROM users WHERE id=?",
@@ -3837,6 +3899,189 @@ class Handler(BaseHTTPRequestHandler):
             "Pop-up %s (%s)" % (item["name"], item["cert"]))
         if url:
             self.redirect(url)
+
+    def do_buy_popup_points(self, con, user):
+        """Buy a points freebie pop-up with points only — no money.
+        Points spent here drop off (balance only, never earned), like
+        points offered in a trade. Most pop-ups stay money-only; only
+        listings with a points price (the weekly drifter) work here."""
+        if self.need_login(user):
+            return
+        f = self.form()
+        item = con.execute(
+            "SELECT * FROM popup_items WHERE id=? AND stock>0",
+            (f.get("popup_id"),)).fetchone()
+        if not item or not item["points_price"]:
+            self.send_html(page("Shop",
+                                 "<p class='err'>That pop-up is not "
+                                 "available for points.</p>", user))
+            return
+        fresh = con.execute("SELECT * FROM users WHERE id=?",
+                            (user["id"],)).fetchone()
+        if fresh["points"] < item["points_price"]:
+            self.send_html(page("Shop",
+                                 "<p class='err'>You need %d points for "
+                                 "this freebie — you have %d.</p>"
+                                 % (item["points_price"],
+                                    fresh["points"]), user))
+            return
+        ok, _kind, _name, _cert, msg = grant_purchase(
+            con, {"item_type": "popup", "item_ref": item["cert"]},
+            user["id"])
+        if not ok:
+            self.send_html(page("Shop", "<p class='err'>%s</p>" % esc(msg),
+                                 user))
+            return
+        con.execute("UPDATE users SET points=points-? WHERE id=?",
+                    (item["points_price"], user["id"]))
+        con.commit()
+        self.redirect("/me?msg=Freebie+claimed!")
+
+    # -- points market: players list a baby for sale in points --
+    def points_market(self, con, user):
+        if self.need_login(user):
+            return
+        rows = con.execute(
+            "SELECT points_listings.*, babies.name AS baby_name, "
+            "babies.cert AS baby_cert, babies.tribe AS tribe, "
+            "babies.hoodie_pattern AS pattern, babies.stones AS stones, "
+            "babies.face AS face, users.username AS seller "
+            "FROM points_listings JOIN babies ON babies.id = "
+            "points_listings.baby_id JOIN users ON users.id = "
+            "points_listings.seller_id "
+            "WHERE points_listings.status='pending' ORDER BY id").fetchall()
+        body = ("<p>Players put figures up here for other players to "
+                "buy with points. Points you spend go to the seller "
+                "(balance only, never earned). A Shadow bought here "
+                "still needs you to hold 1,200 points, like any Shadow "
+                "trade.</p>")
+        if not rows:
+            body += "<p>Nothing is listed for points right now.</p>"
+        for r in rows:
+            body += ("<div class='card %s'><b>%s</b> (%s, %s) — "
+                     "seller <b>%s</b><br>Hoodie: %s<br>Rhinestones: "
+                     "%s<br>Face: %s<br>Price: <b>%d points</b></div>"
+                     % (theme_class(r["tribe"]), esc(r["baby_name"]),
+                        esc(r["baby_cert"]), esc(tribe_display(r["tribe"])),
+                        esc(r["seller"]), esc(r["pattern"]),
+                        esc(r["stones"]), esc(r["face"]), r["points"]))
+            if user and r["seller_id"] != user["id"]:
+                body += ("<form method='post' action='/points_buy'>"
+                         "<input type='hidden' name='listing_id' "
+                         "value='%d'><button>Buy for %d "
+                         "points</button></form>"
+                         % (r["id"], r["points"]))
+            if user and r["seller_id"] == user["id"]:
+                body += ("<form method='post' action='/points_cancel'>"
+                         "<input type='hidden' name='listing_id' "
+                         "value='%d'><button>Cancel "
+                         "listing</button></form>" % r["id"])
+        self.send_html(page("Points Market", body, user))
+
+    def do_points_list(self, con, user):
+        """List one of your babies for sale in points (seller picks
+        the price, at least 1 point). A listed baby leaves the trade
+        board while it is listed, so it can't be traded and sold at
+        the same time."""
+        if self.need_login(user):
+            return
+        f = self.form()
+        try:
+            price = int(f.get("points_price") or 0)
+        except ValueError:
+            price = 0
+        b = con.execute("SELECT * FROM babies WHERE id=? AND owner_id=?",
+                        (f.get("baby_id"), user["id"])).fetchone()
+        if not b or price < 1:
+            self.send_html(page("My Collection",
+                                 "<p class='err'>That listing needs one "
+                                 "of your babies and a price of at least "
+                                 "1 point.</p>", user))
+            return
+        existing = con.execute(
+            "SELECT 1 FROM points_listings WHERE baby_id=? AND "
+            "status='pending'", (b["id"],)).fetchone()
+        if existing:
+            self.send_html(page("My Collection",
+                                 "<p class='err'>That baby is already "
+                                 "listed for points.</p>", user))
+            return
+        con.execute("INSERT INTO points_listings (baby_id, seller_id, "
+                    "points) VALUES (?,?,?)",
+                    (b["id"], user["id"], price))
+        con.execute("UPDATE babies SET for_trade=0 WHERE id=?",
+                    (b["id"],))
+        con.commit()
+        self.redirect("/points_market?msg=Listed!")
+
+    def do_points_buy(self, con, user):
+        """Buy a points-market listing: points move from buyer to
+        seller (balance only, never earned) and the baby changes
+        owner. Shadows keep the 1,200-point holding gate."""
+        if self.need_login(user):
+            return
+        f = self.form()
+        lst = con.execute(
+            "SELECT * FROM points_listings WHERE id=? AND "
+            "status='pending'", (f.get("listing_id"),)).fetchone()
+        if not lst:
+            self.send_html(page("Points Market",
+                                 "<p class='err'>That listing is no "
+                                 "longer available.</p>", user))
+            return
+        if lst["seller_id"] == user["id"]:
+            self.send_html(page("Points Market",
+                                 "<p class='err'>You can't buy your own "
+                                 "listing.</p>", user))
+            return
+        baby = con.execute("SELECT * FROM babies WHERE id=? AND "
+                           "owner_id=?", (lst["baby_id"],
+                                          lst["seller_id"])).fetchone()
+        if not baby:
+            self.send_html(page("Points Market",
+                                 "<p class='err'>That baby is no longer "
+                                 "with the seller.</p>", user))
+            return
+        fresh = con.execute("SELECT * FROM users WHERE id=?",
+                            (user["id"],)).fetchone()
+        if baby["tribe"] == "Blacks" and \
+                fresh["points"] < BLACK_TRADE_MIN_POINTS:
+            self.send_html(page("Points Market",
+                                 "<p class='err'>Buying a Shadow needs "
+                                 "you to hold 1,200 points.</p>", user))
+            return
+        if fresh["points"] < lst["points"]:
+            self.send_html(page("Points Market",
+                                 "<p class='err'>You need %d points — "
+                                 "you have %d.</p>"
+                                 % (lst["points"], fresh["points"]), user))
+            return
+        con.execute("UPDATE users SET points=points-? WHERE id=?",
+                    (lst["points"], user["id"]))
+        con.execute("UPDATE users SET points=points+? WHERE id=?",
+                    (lst["points"], lst["seller_id"]))
+        con.execute("UPDATE babies SET owner_id=?, for_trade=0 "
+                    "WHERE id=?", (user["id"], baby["id"]))
+        con.execute("UPDATE points_listings SET status='sold' "
+                    "WHERE id=?", (lst["id"],))
+        con.commit()
+        self.redirect("/me?msg=Bought+with+points!")
+
+    def do_points_cancel(self, con, user):
+        """Cancel your own pending points listing; the baby stays
+        with you."""
+        if self.need_login(user):
+            return
+        f = self.form()
+        lst = con.execute(
+            "SELECT * FROM points_listings WHERE id=? AND "
+            "status='pending' AND seller_id=?",
+            (f.get("listing_id"), user["id"])).fetchone()
+        if lst:
+            con.execute("UPDATE points_listings SET status='cancelled' "
+                        "WHERE id=?", (lst["id"],))
+            con.commit()
+        self.redirect("/points_market")
 
     def do_claim_gift(self, con, user):
         """Claim the monthly gift: one free baby per user per calendar
