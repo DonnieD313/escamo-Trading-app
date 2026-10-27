@@ -142,15 +142,15 @@ def main():
             "hoodie_pattern": "Wave Crest",
             "stones": "yellow + green rhinestones", "face": "fish-like"}
     blue2 = dict(blue, cert="EHB-B002")
-    damiana = {"name": "Damiana June", "cert": "EHB-L001", "tribe": "Blues",
+    snoot = {"name": "Snoot-Duie", "cert": "EHB-L001", "tribe": "Blues",
                "hoodie_pattern": "Guiding Star",
                "stones": "yellow + green rhinestones",
                "face": "fish-like, surprised crying look"}
-    aaliyah = {"name": "Aaliyah Bee", "cert": "EHB-L002", "tribe": "Browns",
+    bea = {"name": "Bea Bee", "cert": "EHB-L002", "tribe": "Browns",
                "hoodie_pattern": "Forest Canopy",
                "stones": "amber + gold rhinestones, red stone in forehead",
                "face": "animal-like, grouchy"}
-    jazmyn = {"name": "Jazmyn", "cert": "EHB-L003", "tribe": "Reds",
+    memegal = {"name": "Me,Me Gal", "cert": "EHB-L003", "tribe": "Reds",
               "hoodie_pattern": "All-black hoodie, diamond head, wand "
               "with fire-red tip",
               "stones": "stones of every different color on all-black "
@@ -171,13 +171,13 @@ def main():
           escamo_app.portrait_svg(blue) == svg_blue)
     check("same pattern, different cert gives different portrait",
           escamo_app.portrait_svg(blue2) != svg_blue)
-    check("Damiana portrait has crying tears",
-          "#7CC4FF" in escamo_app.portrait_svg(damiana))
-    check("Aaliyah portrait has forehead stone",
-          "60,26 64,31 60,36 56,31" in escamo_app.portrait_svg(aaliyah))
-    svg_jazmyn = escamo_app.portrait_svg(jazmyn)
-    check("Jazmyn portrait has black hoodie and fire-red wand tip",
-          "#111111" in svg_jazmyn and "#FF3B1F" in svg_jazmyn)
+    check("Snoot-Duie portrait has crying tears",
+          "#7CC4FF" in escamo_app.portrait_svg(snoot))
+    check("Bea Bee portrait has forehead stone",
+          "60,26 64,31 60,36 56,31" in escamo_app.portrait_svg(bea))
+    svg_memegal = escamo_app.portrait_svg(memegal)
+    check("Me,Me Gal portrait has black hoodie and fire-red wand tip",
+          "#111111" in svg_memegal and "#FF3B1F" in svg_memegal)
     check("Black portrait has diamond eyes",
           "#DFF6FF" in escamo_app.portrait_svg(black))
     svg_god1 = escamo_app.portrait_svg(god1)
@@ -192,8 +192,8 @@ def main():
     check("villager portrait has exactly 5 stones",
           stone_dots(svg_blue) == 5, "got %d" % stone_dots(svg_blue))
     check("leader portrait has exactly 10 stones",
-          stone_dots(escamo_app.portrait_svg(damiana)) == 10,
-          "got %d" % stone_dots(escamo_app.portrait_svg(damiana)))
+          stone_dots(escamo_app.portrait_svg(snoot)) == 10,
+          "got %d" % stone_dots(escamo_app.portrait_svg(snoot)))
     check("god portrait has exactly 15 stones",
           stone_dots(svg_god1) == 15, "got %d" % stone_dots(svg_god1))
     check("Shadow portrait has exactly 5 stones",
@@ -201,13 +201,13 @@ def main():
           "got %d" % stone_dots(escamo_app.portrait_svg(black)))
     # Stone counts in card text, and tribe display names on cards.
     full_blue = dict(blue, is_custom=0, for_trade=0, gender=None)
-    full_damiana = dict(damiana, is_custom=0, for_trade=0,
+    full_snoot = dict(snoot, is_custom=0, for_trade=0,
                         gender="female")
     full_god = dict(god1, is_custom=0, for_trade=0, gender="male")
     check("villager card shows Stones: 5",
           "Stones: 5" in escamo_app.baby_card(full_blue))
     check("leader card shows Stones: 10",
-          "Stones: 10" in escamo_app.baby_card(full_damiana))
+          "Stones: 10" in escamo_app.baby_card(full_snoot))
     check("god card shows Stones: 15",
           "Stones: 15" in escamo_app.baby_card(full_god))
     check("card shows Waterliewaveminans, not Blues",
@@ -223,6 +223,67 @@ def main():
           and escamo_app.tribe_display("Browns") == "Fortress Rooted"
           and escamo_app.tribe_display("Reds") == "Windyworrors"
           and escamo_app.tribe_display("Blacks") == "Shadows")
+    # Leaders (Oct 27, 2026 renames): Snoot-Duie/Blues, Bea Bee/
+    # Browns, Me,Me Gal/Reds, $10 each, each controlling only their
+    # own tribe; gods unchanged.
+    leaders = {ld["tribe"]: ld["name"] for ld in escamo_app.LEADERS}
+    check("three leaders with new names and tribes",
+          leaders == {"Blues": "Snoot-Duie", "Browns": "Bea Bee",
+                      "Reds": "Me,Me Gal"})
+    check("leader prices unchanged at $10.00",
+          escamo_app.PRICE_LEADER == "10.00"
+          and escamo_app.PRICE_INDIVIDUAL == "1.99"
+          and escamo_app.PRICE_GOD == "40.00")
+    check("leader photos renamed, old files gone from mapping",
+          escamo_app.REALISTIC_IMAGES.get("Snoot-Duie") == "snoot-duie.jpg"
+          and escamo_app.REALISTIC_IMAGES.get("Bea Bee") == "bea-bee.jpg"
+          and escamo_app.REALISTIC_IMAGES.get("Me,Me Gal") == "me-me-gal.jpg"
+          and "Damiana June" not in escamo_app.REALISTIC_IMAGES
+          and "Aaliyah Bee" not in escamo_app.REALISTIC_IMAGES
+          and "Jazmyn" not in escamo_app.REALISTIC_IMAGES)
+    # Faces: unique within each tribe, inside the tribe's expression
+    # family, for every roster + shop character (+ Shadows roster).
+    _fam = {"Blues": ("surprised", "happy", "scared"),
+            "Browns": ("grouchy", "sleepy", "slight smile", "happy"),
+            "Reds": ("curious", "suspicious", "happy"),
+            "Blacks": ("mean", "sneaky")}
+    _groups = {"Blues": list(escamo_app.STARTERS["Blues"]["names"]),
+               "Browns": list(escamo_app.STARTERS["Browns"]["names"]),
+               "Reds": list(escamo_app.STARTERS["Reds"]["names"]),
+               "Blacks": [r["name"] for r in escamo_app.BLACKS_ROSTER]}
+    for _nm, _tr in escamo_app.SHOP_INDIVIDUALS:
+        _groups[_tr].append(_nm)
+    for _tr, _names in _groups.items():
+        _faces = [escamo_app.face_for(_n, _tr, "?") for _n in _names]
+        check("faces unique within %s" % _tr,
+              len(set(_faces)) == len(_faces)
+              and all(_f != "?" for _f in _faces),
+              "faces=%s" % _faces)
+        check("faces inside %s expression family" % _tr,
+              all(any(_w in _f for _w in _fam[_tr]) for _f in _faces))
+    # Pop-up faces rotate curious / scared / aware.
+    check("pop-up faces rotate curious, scared, aware",
+          "curious" in escamo_app.popup_face("Blues", 0)
+          and "scared" in escamo_app.popup_face("Blues", 1)
+          and "aware" in escamo_app.popup_face("Blues", 2))
+    # Themed cards: water / woods / sky / underground.
+    check("card themes match tribes",
+          escamo_app.theme_class("Blues") == "theme-water"
+          and escamo_app.theme_class("Browns") == "theme-woods"
+          and escamo_app.theme_class("Reds") == "theme-sky"
+          and escamo_app.theme_class("Blacks") == "theme-underground")
+    check("baby card carries its tribe theme class",
+          "theme-water" in escamo_app.baby_card(full_blue))
+    # Old leader names survive only in the DB-migration rename tuples.
+    _src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "app.py")).read()
+    _bad = [ln for ln in _src.splitlines()
+            if any(_o in ln for _o in ("Damiana June", "Aaliyah Bee",
+                                       "Jazmyn", "Jazmyne"))
+            and "Snoot-Duie" not in ln and "Bea Bee" not in ln
+            and "Me,Me Gal" not in ln]
+    check("old leader names only in migration renames", not _bad,
+          "bad=%s" % _bad[:3])
     svg_evil = escamo_app.portrait_svg(evil)
     check("portrait escapes baby names",
           "<script>" not in svg_evil and "&lt;script&gt;" in svg_evil)
@@ -567,13 +628,39 @@ def main():
             check("shop shows leader price $10.00", "10.00" in shop_html)
             check("shop shows god price $40.00", "40.00" in shop_html)
             check("shop shows leader choices for purchase",
-                  "Damiana June" in shop_html
-                  and "Aaliyah Bee" in shop_html
-                  and "Jazmyn" in shop_html)
+                  "Snoot-Duie" in shop_html
+                  and "Bea Bee" in shop_html
+                  and "Me,Me Gal" in shop_html)
             check("shop shows named gods for purchase",
                   "Muzle Back" in shop_html
                   and "Baraka" in shop_html
                   and "Sirus V" in shop_html)
+            check("shop cards carry tribe themes and pop-up underworld line",
+                  "theme-water" in shop_html
+                  and "theme-woods" in shop_html
+                  and "theme-sky" in shop_html
+                  and "From the underworld, kept by the gods." in shop_html)
+            check("shop shows unique shop faces",
+                  all(_f in shop_html for _f in
+                      ("fish-like, surprised with a dropped jaw and round eyes",
+                       "animal-like, grouchy with a scowl and flattened ears",
+                       "angel-like, happy with a beaming grin and starry eyes")))
+            s, world_html = get(carol, "/world", base=mock_base)
+            check("world page: new leaders, own-tribe rule, gods underworld",
+                  "Snoot-Duie" in world_html
+                  and "Bea Bee" in world_html
+                  and "Me,Me Gal" in world_html
+                  and "Damiana June" not in world_html
+                  and "Aaliyah Bee" not in world_html
+                  and "Jazmyn" not in world_html
+                  and "over the other leaders" in world_html
+                  and "run the" in world_html
+                  and "underworld" in world_html
+                  and "Pop-ups are underworld babies" in world_html
+                  and "theme-water" in world_html
+                  and "theme-woods" in world_html
+                  and "theme-sky" in world_html
+                  and "theme-underground" in world_html)
             check("shop shows points packs",
                   "300 points" in shop_html
                   and "1200 points" in shop_html)
@@ -1007,7 +1094,7 @@ def main():
                             "offered_points": "0"}, base=cap_base)
             check("regular trader second offer refused by cap",
                   "at most 1" in resp)
-            # u1 buys leader Damiana June via PayPal: cap becomes 2.
+            # u1 buys leader Snoot-Duie via PayPal: cap becomes 2.
             ccon = sqlite3.connect(cap_db)
             ccon.row_factory = sqlite3.Row
             ld = ccon.execute(
@@ -1017,7 +1104,7 @@ def main():
             s, html = mock_buy(u1, "/buy_leader",
                                {"leader_id": ld["id"]})
             check("leader purchase page confirms new leader",
-                  "Payment complete" in html and "Damiana June" in html)
+                  "Payment complete" in html and "Snoot-Duie" in html)
             ccon = sqlite3.connect(cap_db)
             ccon.row_factory = sqlite3.Row
             lsold = ccon.execute(
@@ -1437,13 +1524,13 @@ def main():
         check("leaders are female by name",
               escamo_app.baby_gender("Blues", "Sea Crown",
                                      "blue rhinestones",
-                                     name="Damiana June") == "female"
+                                     name="Snoot-Duie") == "female"
               and escamo_app.baby_gender("Browns", "Forest Canopy",
                                          "green rhinestones",
-                                         name="Aaliyah Bee") == "female"
+                                         name="Bea Bee") == "female"
               and escamo_app.baby_gender("Reds", "Sky Veil",
                                          "red rhinestones",
-                                         name="Jazmyn") == "female")
+                                         name="Me,Me Gal") == "female")
         check("leaders are female by certificate",
               escamo_app.baby_gender("Blues", "Sea Crown",
                                      "blue rhinestones",
@@ -1636,9 +1723,9 @@ def main():
             check("pop-up purchase grants the baby",
                   pbaby is not None
                   and pbaby["owner_id"] == dana_row["id"])
-            # Ownership: dana buys Damiana June, then trades her away.
+            # Ownership: dana buys Snoot-Duie, then trades her away.
             ld = bcon.execute(
-                "SELECT * FROM leaders WHERE name='Damiana June'"
+                "SELECT * FROM leaders WHERE name='Snoot-Duie'"
                 ).fetchone()
             s, ret_html = buy_and_capture(
                 dana, "/buy_leader", {"leader_id": ld["id"]})
@@ -1748,7 +1835,7 @@ def main():
                 "harbor.jpg", "lagoon.jpg", "reef.jpg", "drift.jpg",
                 "birch.jpg", "cedar.jpg", "alder.jpg", "aspen.jpg",
                 "sol.jpg", "nova.jpg", "zephyr.jpg", "flare.jpg",
-                "damiana-june.jpg", "aaliyah-bee.jpg", "jazmyn.jpg",
+                "snoot-duie.jpg", "bea-bee.jpg", "me-me-gal.jpg",
                 "muzle-back.jpg", "baraka.jpg", "sirus-v.jpg",
                 "black-miner.jpg",
                 "marina.jpg", "coral.jpg", "pearl.jpg", "tide.jpg",
@@ -1777,7 +1864,7 @@ def main():
             s, shop_html = get(http.cookiejar.CookieJar(), "/shop")
             check("shop cards reference realistic photos",
                   "/img/harbor.jpg" in shop_html
-                  and "/img/damiana-june.jpg" in shop_html
+                  and "/img/snoot-duie.jpg" in shop_html
                   and "/img/muzle-back.jpg" in shop_html)
             photo_jar = http.cookiejar.CookieJar()
             s, _ = signup_full(photo_jar, "photo", "secret9",
@@ -2056,7 +2143,7 @@ def main():
                   and "Village complete!" in me3)
             # A leader purchase does not raise the village count.
             ld = ncon.execute(
-                "SELECT * FROM leaders WHERE name='Damiana June'"
+                "SELECT * FROM leaders WHERE name='Snoot-Duie'"
                 ).fetchone()
             s, ret_html = n_buy(nova, "/buy_leader",
                                 {"leader_id": ld["id"]})
@@ -2067,10 +2154,10 @@ def main():
             check("leader excluded from village count", vcount == 40,
                   "got %d" % vcount)
             check("village progress names the owned leader",
-                  "Damiana June" in vnames)
+                  "Snoot-Duie" in vnames)
             s, me4 = get(nova, "/me", base=nbase)
             check("collection shows village leader alongside",
-                  "Village leader: Damiana June" in me4)
+                  "Village leader: Snoot-Duie" in me4)
             # Invite bonus: a friend joining with nova's code pays +20.
             friend = http.cookiejar.CookieJar()
             s, _ = signup_full(friend, "friend1", "secret9",

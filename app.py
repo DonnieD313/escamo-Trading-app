@@ -48,8 +48,8 @@ REALISTIC_IMAGES = {
     "Alder": "alder.jpg", "Aspen": "aspen.jpg",
     "Sol": "sol.jpg", "Nova": "nova.jpg",
     "Zephyr": "zephyr.jpg", "Flare": "flare.jpg",
-    "Damiana June": "damiana-june.jpg",
-    "Aaliyah Bee": "aaliyah-bee.jpg", "Jazmyn": "jazmyn.jpg",
+    "Snoot-Duie": "snoot-duie.jpg",
+    "Bea Bee": "bea-bee.jpg", "Me,Me Gal": "me-me-gal.jpg",
     "Muzle Back": "muzle-back.jpg", "Baraka": "baraka.jpg",
     "Sirus V": "sirus-v.jpg",
     # Starter-roster characters: the weekly pop-up is always a roster
@@ -99,7 +99,7 @@ def rate_clear(key):
 
 # ---------------------------------------------------------------- starter data
 # Baby names for Blues are sea/ocean names (per Doneil's spec). The Blues
-# are exactly five characters, not including their leader Damiana June.
+# are exactly five characters, not including their leader Snoot-Duie.
 # Browns/Reds starter names below are placeholders he can replace.
 STARTERS = {
     "Blues": {
@@ -145,6 +145,92 @@ BLACKS_ROSTER = [
 BLACK_STONES = "black stones on all-white hoodie"
 BLACK_FACE = "angry creature-like"
 
+# Every roster + shop character has its own face description, unique
+# within its tribe. Expression families per tribe (Doneil, Oct 27,
+# 2026): Blues fish-like surprised/happy/scary; Browns animal-like
+# grouchy/sleepy/slight smile/happy; Reds angel-like curious/
+# suspicious/happy; Shadows angry creature-like mean/sneaky. Leaders
+# keep their own faces in LEADERS below. Photos are NOT regenerated
+# here: these strings are the face descriptions shown on cards and
+# detail pages; existing photos keep their old faces/backgrounds.
+CHARACTER_FACES = {
+    # Blues — fish-like
+    "Marina": "fish-like, surprised with wide eyes and a small open mouth",
+    "Coral": "fish-like, happy with a broad smile and sparkling eyes",
+    "Pearl": "fish-like, scared with raised brows and a tiny gasp",
+    "Tide": "fish-like, surprised with one raised brow and parted lips",
+    "Kai": "fish-like, happy with closed smiling eyes and rosy cheeks",
+    "Harbor": "fish-like, scared with wide eyes and a trembling mouth",
+    "Lagoon": "fish-like, surprised with a dropped jaw and round eyes",
+    "Reef": "fish-like, happy with a wink and a crooked grin",
+    "Drift": "fish-like, scared with a sideways glance and pursed lips",
+    # Browns — animal-like
+    "Willow": "animal-like, grouchy with a deep frown and narrowed eyes",
+    "Fern": "animal-like, sleepy with half-closed eyes and a yawn",
+    "Hazel": "animal-like, slight smile with a gentle upturned mouth",
+    "Rowan": "animal-like, happy with a big grin and bright eyes",
+    "Ivy": "animal-like, grouchy with crossed brows and a pout",
+    "Maple": "animal-like, sleepy with drooping lids and a soft sigh",
+    "Juniper": "animal-like, slight smile with one cheek dimple",
+    "Sage": "animal-like, happy with laughing eyes and an open smile",
+    "Birch": "animal-like, grouchy with a scowl and flattened ears",
+    "Cedar": "animal-like, sleepy with slow blinking eyes",
+    "Alder": "animal-like, slight smile with a shy sideways grin",
+    "Aspen": "animal-like, happy with a cheerful open-mouthed laugh",
+    # Reds — angel-like
+    "Ember": "angel-like, curious with tilted head and wide inquisitive eyes",
+    "Storm": "angel-like, suspicious with narrowed eyes and a sideways look",
+    "Skye": "angel-like, happy with a radiant smile and sparkling eyes",
+    "Ash": "angel-like, curious with raised brows and parted lips",
+    "Blaze": "angel-like, suspicious with a raised brow and a tight mouth",
+    "Aurora": "angel-like, happy with closed smiling eyes and a glow",
+    "Cinder": "angel-like, curious with a chin tilt and bright eyes",
+    "Tempest": "angel-like, suspicious with a watchful stare and flat mouth",
+    "Sol": "angel-like, happy with a beaming grin and starry eyes",
+    "Nova": "angel-like, curious with a forward lean and eager eyes",
+    "Zephyr": "angel-like, suspicious with a skeptical smirk",
+    "Flare": "angel-like, happy with a laughing smile and lifted cheeks",
+    # Shadows — angry creature-like, diamond eyes
+    "Onyx": "angry creature-like, mean with a fierce scowl and sharp eyes",
+    "Shadow": "angry creature-like, sneaky with a sly sideways grin",
+    "Coal": "angry creature-like, mean with bared teeth and a glare",
+    "Midnight": "angry creature-like, sneaky with half-lidded plotting eyes",
+    "Slate": "angry creature-like, mean with a heavy frown and clenched jaw",
+    "Umbra": "angry creature-like, sneaky with a quiet smirk and darting eyes",
+}
+
+
+def face_for(name, tribe, default):
+    """A character's own face description, or the tribe default for
+    user-created babies whose names are not in the roster/shop."""
+    return CHARACTER_FACES.get(name, default)
+
+
+# Pop-up variants rotate through curious / scared / aware looks.
+POPUP_FACE_EXPRESSIONS = ["curious", "scared", "aware"]
+
+
+def popup_face(tribe, salt):
+    """Face for a pop-up variant: the tribe's face type plus one of
+    the rotating pop-up expressions (curious, scared, aware)."""
+    base = STARTERS[tribe]["face"] if tribe in STARTERS else "creature-like"
+    expr = POPUP_FACE_EXPRESSIONS[salt % len(POPUP_FACE_EXPRESSIONS)]
+    return "%s, %s pop-up look" % (base, expr)
+
+
+# Card theming: each tribe's cards and World section carry its own
+# environment — water for Blues, woods for Browns, sky for Reds,
+# underground for Shadows (and for the gods, who run the underworld).
+THEME_CLASS = {
+    "Blues": "theme-water", "Browns": "theme-woods",
+    "Reds": "theme-sky", "Blacks": "theme-underground",
+    "Gods": "theme-underground",
+}
+
+
+def theme_class(tribe):
+    return THEME_CLASS.get(tribe, "")
+
 # Display names for the tribes (Doneil's renames). Internal keys stay
 # Blues/Browns/Reds/Blacks everywhere in the database and code — only
 # what users see changes. Colors, faces, and lore stay the same.
@@ -172,14 +258,14 @@ BLACK_TRADE_MIN_POINTS = 1200
 # that leader is unavailable to other buyers. A bought leader joins the
 # buyer's collection and trades like any other baby.
 LEADERS = [
-    {"cert": "EHB-L001", "name": "Damiana June", "tribe": "Blues",
+    {"cert": "EHB-L001", "name": "Snoot-Duie", "tribe": "Blues",
      "pattern": "Guiding Star", "stones": "yellow + green rhinestones",
      "face": "fish-like, surprised crying look"},
-    {"cert": "EHB-L002", "name": "Aaliyah Bee", "tribe": "Browns",
+    {"cert": "EHB-L002", "name": "Bea Bee", "tribe": "Browns",
      "pattern": "Forest Canopy",
      "stones": "amber + gold rhinestones, red stone in forehead",
      "face": "animal-like, grouchy"},
-    {"cert": "EHB-L003", "name": "Jazmyn", "tribe": "Reds",
+    {"cert": "EHB-L003", "name": "Me,Me Gal", "tribe": "Reds",
      "pattern": "All-black hoodie, diamond head, wand with fire-red tip",
      "stones": "stones of every different color on all-black hoodie",
      "face": "angel-like, slight curious smile"},
@@ -591,11 +677,11 @@ def init_db():
         for text in (
             "The First Beginnings collection is live — the first hoodie "
             "babies have arrived.",
-            "Damiana June, leader of the Waterliewaveminans, is "
+            "Snoot-Duie, leader of the Waterliewaveminans, is "
             "available — found in the sea.",
-            "Aaliyah Bee, leader of the Fortress Rooted, is available — "
+            "Bea Bee, leader of the Fortress Rooted, is available — "
             "found in the woods.",
-            "Jazmyn, leader of the Windyworrors, is available — found "
+            "Me,Me Gal, leader of the Windyworrors, is available — found "
             "in the sky.",
             "The Waterliewaveminans have arrived — Marina, Coral, Pearl, "
             "Tide, and Kai, found by the sea.",
@@ -619,7 +705,7 @@ def init_db():
                 " stones, face, price) VALUES (?,?,?,?,?,?,?)",
                 ("EHB-S%03d" % (i + 1), name, tribe,
                  pool["patterns"][i % len(pool["patterns"])],
-                 pool["stones"], pool["face"], PRICE_INDIVIDUAL))
+                 pool["stones"], face_for(name, tribe, pool["face"]), PRICE_INDIVIDUAL))
     # Leaders: the 3 unique founders, seeded once.
     if con.execute("SELECT COUNT(*) FROM leaders").fetchone()[0] == 0:
         for ld in LEADERS:
@@ -639,6 +725,28 @@ def init_db():
     for g in GODS:
         con.execute("UPDATE gods SET name=? WHERE cert=?",
                     (g["name"], g["cert"]))
+    # Migration for the leader renames (Oct 27, 2026): rename leader
+    # rows by certificate, rename any owned leader babies, rewrite
+    # leader names in Notices, and give roster/shop babies their
+    # unique faces.
+    for ld in LEADERS:
+        con.execute("UPDATE leaders SET name=?, face=? WHERE cert=?",
+                    (ld["name"], ld["face"], ld["cert"]))
+    for old, new in (("Damiana June", "Snoot-Duie"),
+                     ("Aaliyah Bee", "Bea Bee"),
+                     ("Jazmyn", "Me,Me Gal"),
+                     ("Jazmyne", "Me,Me Gal")):
+        con.execute("UPDATE babies SET name=? WHERE name=?", (new, old))
+        con.execute("UPDATE notices SET text=REPLACE(text, ?, ?)",
+                    (old, new))
+    for _name, _face in CHARACTER_FACES.items():
+        con.execute("UPDATE babies SET face=? WHERE name=?",
+                    (_face, _name))
+        con.execute("UPDATE shop_items SET face=? WHERE name=?",
+                    (_face, _name))
+    for ld in LEADERS:
+        con.execute("UPDATE babies SET face=? WHERE name=?",
+                    (ld["face"], ld["name"]))
     # Migration for pop-up tiers: popup_items gains a tier (drifter /
     # special / rare / shadow) and a stock count (copies left) plus the
     # edition total. Existing rows are all weekly drifters (one copy).
@@ -690,7 +798,7 @@ def mint_baby(con, owner_id, tribe=None, name=None, pattern=None,
     name = name or random.choice(pool["names"])
     pattern = pattern or random.choice(pool["patterns"])
     stones = stones or pool["stones"]
-    face = face or pool["face"]
+    face = face or face_for(name, tribe, pool["face"])
     prefix = pool["prefix"] if tribe in STARTERS else "C"
     n = con.execute("SELECT COUNT(*) FROM babies WHERE tribe=?",
                     (tribe,)).fetchone()[0] + 1
@@ -875,7 +983,8 @@ def ensure_weekly_shadow(con):
         " stones, face, price, tier, stock, total)"
         " VALUES (?,?,?,?,?,?,?,?,?,?)",
         (cert, pick["name"], "Blacks", pick["pattern"], BLACK_STONES,
-         BLACK_FACE, PRICE_SHADOW, "shadow", 1, 1))
+         face_for(pick["name"], "Blacks", BLACK_FACE), PRICE_SHADOW,
+         "shadow", 1, 1))
     add_notice(con, "A Shadow has popped up in the Shop — %s with %s, "
                "found underground. $%s." % (pick["name"], pick["pattern"],
                                             PRICE_SHADOW))
@@ -1007,7 +1116,7 @@ def ensure_weekly_popup(con):
         "INSERT INTO popup_items (cert, name, tribe, hoodie_pattern,"
         " stones, face, price, tier, stock, total)"
         " VALUES (?,?,?,?,?,?,?,?,?,?)",
-        (cert, name, tribe, pattern, stones, STARTERS[tribe]["face"],
+        (cert, name, tribe, pattern, stones, popup_face(tribe, iso_week),
          PRICE_INDIVIDUAL, "drifter", 1, 1))
     add_notice(con, "A new %s drifter popped up in the Shop — %s with "
                "%s, found %s." % (tribe_display(tribe), pattern, stones,
@@ -1050,7 +1159,7 @@ def _ensure_weekly_tier_popup(con, cert, tier, price, edition, offset,
         "INSERT INTO popup_items (cert, name, tribe, hoodie_pattern,"
         " stones, face, price, tier, stock, total)"
         " VALUES (?,?,?,?,?,?,?,?,?,?)",
-        (cert, name, tribe, pattern, stones, STARTERS[tribe]["face"],
+        (cert, name, tribe, pattern, stones, popup_face(tribe, idx),
          price, tier, edition, edition))
     add_notice(con, "A %s pop-up appeared in the Shop — %s (%s) with "
                "%s, found %s. Only %d in this edition, $%s."
@@ -1215,6 +1324,10 @@ def page(title, body, user=None):
             "margin:10px 0} .tag{display:inline-block;background:#eef;"
             "border-radius:6px;padding:2px 8px;margin-right:6px}"
             ".ok{color:green} .err{color:red}"
+            ".theme-water{background:#eaf6ff;border-color:#7ec3e8}"
+            ".theme-woods{background:#eff5e6;border-color:#8fae6b}"
+            ".theme-sky{background:#eaf2ff;border-color:#9db8e8}"
+            ".theme-underground{background:#f1eff5;border-color:#6b5b7a}"
             "</style></head><body>%s<h1>%s</h1>%s"
             "<footer style='margin-top:24px;padding-top:12px;"
             "border-top:1px solid #ccc;font-size:13px;color:#444'>"
@@ -1288,8 +1401,8 @@ _TRIBE_STYLE = {
 _GOD_ACCENTS = {
     "Muzle Back": "#7B2D8E", "Baraka": "#0E7C6B", "Sirus V": "#8E1F2F",
 }
-_LEADER_CERTS = {"EHB-L001": "Damiana June", "EHB-L002": "Aaliyah Bee",
-                 "EHB-L003": "Jazmyn"}
+_LEADER_CERTS = {"EHB-L001": "Snoot-Duie", "EHB-L002": "Bea Bee",
+                 "EHB-L003": "Me,Me Gal"}
 
 
 def _bget(b, key, default=""):
@@ -1303,7 +1416,7 @@ def _bget(b, key, default=""):
 def _stone_colors(stones_text, tribe):
     """Rhinestone colors for a baby: parsed from its stored stones text,
     falling back to the tribe default. Shadows always get black stones
-    on their white hoodies; Jazmyn-style 'every different color' gets
+    on their white hoodies; Me,Me Gal-style 'every different color' gets
     the rainbow."""
     if tribe == "Blacks":
         return ["#222222"]
@@ -1371,17 +1484,17 @@ def portrait_svg(b, size=120):
     stones_text = _bget(b, "stones")
     style = _TRIBE_STYLE.get(tribe, _TRIBE_STYLE["Blues"])
     bg, hoodie, face = style["bg"], style["hoodie"], style["face"]
-    is_damiana = cert == "EHB-L001" or name == "Damiana June"
-    is_aaliyah = cert == "EHB-L002" or name == "Aaliyah Bee"
-    is_jazmyn = cert == "EHB-L003" or name == "Jazmyn"
+    is_snoot = cert == "EHB-L001" or name == "Snoot-Duie"
+    is_bea = cert == "EHB-L002" or name == "Bea Bee"
+    is_memegal = cert == "EHB-L003" or name == "Me,Me Gal"
     is_god = tribe == "Gods"
-    if is_jazmyn:
+    if is_memegal:
         hoodie = "#111111"
     accent = _GOD_ACCENTS.get(name, "#FFC93B") if is_god else None
     if is_god:
         hoodie = accent
     stones = _stone_colors(stones_text, tribe)
-    if is_jazmyn:
+    if is_memegal:
         stones = list(_RAINBOW)
     # Deterministic per-baby variation, seeded by the unique certificate.
     rnd = random.Random(cert or "X")
@@ -1399,7 +1512,7 @@ def portrait_svg(b, size=120):
                          "opacity='0.7'/>" % (sx + rnd.randint(-3, 3),
                                               sy + rnd.randint(-3, 3)))
     # Wings behind the body for angel-like Reds.
-    if tribe == "Reds" and not is_jazmyn:
+    if tribe == "Reds" and not is_memegal:
         parts.append("<ellipse cx='24' cy='98' rx='11' ry='20' fill='#FFFFFF' "
                      "stroke='#DDDDDD' transform='rotate(-18 24 98)'/>")
         parts.append("<ellipse cx='96' cy='98' rx='11' ry='20' fill='#FFFFFF' "
@@ -1422,8 +1535,8 @@ def portrait_svg(b, size=120):
     if is_god:
         parts.append("<circle cx='60' cy='52' r='31' fill='none' "
                      "stroke='%s' stroke-width='2' opacity='0.7'/>" % accent)
-    # Head: diamond-shaped and glowing for Jazmyn, round otherwise.
-    if is_jazmyn:
+    # Head: diamond-shaped and glowing for Me,Me Gal, round otherwise.
+    if is_memegal:
         parts.append("<polygon points='60,28 82,52 60,76 38,52' "
                      "fill='#EAF7FF' stroke='#7CC4FF' stroke-width='2'/>")
         parts.append("<path d='M38,52 L60,28 L82,52' fill='none' "
@@ -1448,14 +1561,14 @@ def portrait_svg(b, size=120):
                      "stroke='#333333'/>")
         parts.append("<path d='M50,66 l4,-3 4,3 4,-3 4,3' fill='none' "
                      "stroke='#333333' stroke-width='2'/>")
-    elif is_jazmyn:
+    elif is_memegal:
         # Black eyes only, on the glowing diamond head.
         parts.append("<ellipse cx='51' cy='50' rx='4' ry='5' fill='#111111'/>")
         parts.append("<ellipse cx='69' cy='50' rx='4' ry='5' fill='#111111'/>")
         parts.append("<circle cx='52.5' cy='48.5' r='1.2' fill='#FFFFFF'/>")
         parts.append("<circle cx='70.5' cy='48.5' r='1.2' fill='#FFFFFF'/>")
     else:
-        if is_damiana:
+        if is_snoot:
             # Surprised crying look, blue slanted eyes.
             parts.append("<ellipse cx='51' cy='48' rx='6' ry='3.5' "
                          "fill='#FFFFFF' transform='rotate(-20 51 48)'/>")
@@ -1497,12 +1610,12 @@ def portrait_svg(b, size=120):
                          "opacity='0.6'/>")
             parts.append("<circle cx='78' cy='60' r='3.5' fill='#FF9AA2' "
                          "opacity='0.6'/>")
-    # Aaliyah Bee: red stone in the middle of her forehead.
-    if is_aaliyah:
+    # Bea Bee: red stone in the middle of her forehead.
+    if is_bea:
         parts.append("<polygon points='60,26 64,31 60,36 56,31' "
                      "fill='#E53935' stroke='#8E1F2F'/>")
-    # Halo for angel-like Reds (Jazmyn's hood covers hers).
-    if tribe == "Reds" and not is_jazmyn:
+    # Halo for angel-like Reds (Me,Me Gal's hood covers hers).
+    if tribe == "Reds" and not is_memegal:
         parts.append("<ellipse cx='60' cy='20' rx='15' ry='4.5' fill='none' "
                      "stroke='#FFC93B' stroke-width='3'/>")
     # Crown for gods; each god's accent makes it distinct.
@@ -1511,8 +1624,8 @@ def portrait_svg(b, size=120):
                      "78,30 78,34 42,34' fill='%s' stroke='#8A6D00'/>"
                      % accent)
         parts.append("<circle cx='60' cy='27' r='2' fill='#FFFFFF'/>")
-    # Jazmyn's wand with a fire-red tip.
-    if is_jazmyn:
+    # Me,Me Gal's wand with a fire-red tip.
+    if is_memegal:
         parts.append("<line x1='88' y1='114' x2='98' y2='72' stroke='#6B4423' "
                      "stroke-width='3'/>")
         parts.append("<circle cx='98' cy='69' r='6' fill='#FF3B1F'/>")
@@ -1523,7 +1636,7 @@ def portrait_svg(b, size=120):
     # Rhinestones on the hoodie: gods 15, leaders 10, villagers 5.
     # Villagers keep their per-certificate shuffled slots; leaders and
     # gods get full rows so the count is exact.
-    is_leader = is_damiana or is_aaliyah or is_jazmyn
+    is_leader = is_snoot or is_bea or is_memegal
     if is_god:
         rows = [(38, 88), (50, 88), (62, 88), (74, 88), (86, 88),
                 (38, 106), (50, 106), (62, 106), (74, 106), (86, 106),
@@ -1576,9 +1689,10 @@ def baby_img_html(b, size=120):
 
 
 def baby_card(b, owner_name=None, show_owner=False):
-    out = ("<div class='card'><div style='text-align:center'>%s</div>"
+    out = ("<div class='card %s'><div style='text-align:center'>%s</div>"
            "<b>%s</b> %s <span class='tag'>%s</span> " \
            "<span class='tag'>%s</span><br>" % (
+               theme_class(_bget(b, "tribe")),
                baby_img_html(b), esc(b["name"]),
                gender_marker(_bget(b, "gender", "")),
                esc(b["cert"]), esc(tribe_display(b["tribe"]))))
@@ -1684,14 +1798,15 @@ def popup_shop_section(con, cert, heading, user):
     if (item["total"] or 1) > 1:
         stock_line = ("<br>Only %d of %d left in this edition"
                       % (item["stock"], item["total"]))
-    out = ("<h2>%s</h2><div class='card'><div style='text-align:center'>"
+    out = ("<h2>%s</h2><div class='card %s'><div style='text-align:center'>"
            "%s</div><b>%s</b> %s "
            "<span class='tag'>%s</span> "
            "<span class='tag'>%s</span><br>"
            "Hoodie: %s<br>Rhinestones: %s<br>Stones: %d<br>Face: %s<br>"
+           "From the underworld, kept by the gods.<br>"
            "Price: $%s%s<br><a href='/baby/%s'>View baby — zoom "
            "&amp; spin</a></div>" % (
-               heading, baby_img_html(item),
+               heading, theme_class(item["tribe"]), baby_img_html(item),
                esc(item["name"]),
                gender_marker(baby_gender(item["tribe"],
                                          item["hoodie_pattern"],
@@ -2043,60 +2158,72 @@ class Handler(BaseHTTPRequestHandler):
     def world(self, con, user):
         ensure_weekly_popups(con)
         standings = ""
-        for tribe, leader in (("Blues", "Damiana June"),
-                              ("Browns", "Aaliyah Bee"),
-                              ("Reds", "Jazmyn")):
+        for tribe, leader in (("Blues", "Snoot-Duie"),
+                              ("Browns", "Bea Bee"),
+                              ("Reds", "Me,Me Gal")):
             owner, second, third = tribe_standings(con, tribe)
-            standings += ("<div class='card'><b>%s tribe standings</b>"
+            standings += ("<div class='card %s'><b>%s tribe standings</b>"
                           "<br>Owner: %s<br>Second: %s<br>Third: %s</div>"
-                          % (esc(tribe_display(tribe)),
+                          % (theme_class(tribe), esc(tribe_display(tribe)),
                              esc(owner) if owner else
                              "none yet — buy %s in the Shop" % leader,
                              esc(second) if second else "—",
                              esc(third) if third else "—"))
         standings += ("<div class='card'>Whoever buys a tribe's leader "
-                      "owns that tribe — Damiana June owns the "
-                      "Waterliewaveminans, Aaliyah Bee owns the Fortress "
-                      "Rooted, Jazmyn owns the Windyworrors. Trade the "
+                      "owns that tribe — Snoot-Duie owns the "
+                      "Waterliewaveminans, Bea Bee owns the Fortress "
+                      "Rooted, Me,Me Gal owns the Windyworrors. Trade the "
                       "leader away and ownership passes to the new "
                       "holder. Second and Third are the two other "
                       "holders with the most babies of that tribe — "
                       "titles only, no extra perks.</div>")
         body = """
-        <div class='card'><b>Waterliewaveminans — rulers over water</b><br>
-        Led by <b>Damiana June</b>, Controller of Water. Blue slanted eyes,
+        <div class='card theme-water'><b>Waterliewaveminans — rulers over water</b><br>
+        Led by <b>Snoot-Duie</b>, Controller of Water. Blue slanted eyes,
         fish-like face with a surprised crying look. The rare one of her
         tribe — purchasable when the platform goes live. The
         Waterliewaveminans run the sea and have only five characters, not
         including her: Marina, Coral, Pearl, Tide, and Kai. They carry sea
-        and ocean names, and their faces are fish-like.</div>
-        <div class='card'><b>Fortress Rooted — rulers of the forest</b><br>
-        Led by <b>Aaliyah Bee</b>, ruler of the woods, keeper of the woods
+        and ocean names, and their faces are fish-like — surprised, happy,
+        or scary — with every character's face different from the others.
+        Snoot-Duie controls only the water; she grants powers to others,
+        and no leader is over the other leaders.</div>
+        <div class='card theme-woods'><b>Fortress Rooted — rulers of the forest</b><br>
+        Led by <b>Bea Bee</b>, ruler of the woods, keeper of the woods
         and animals, with a red stone in the middle of her forehead.
-        Fortress Rooted have a more animal-like face, and Aaliyah Bee's is
-        animal-looking and grouchy.</div>
-        <div class='card'><b>Windyworrors — rulers of the sky</b><br>
-        Led by <b>Jazmyn</b>, ruler of the sky. Although she leads the
-        Windyworrors, she is more powerful than the other controllers.
-        Glowing diamond head, black eyes, all-black hoodie with stones of
-        every different color, hoodie over her face, wand with a fire-red
-        tip. Windyworrors have more angel-like faces, and Jazmyn's is
-        angel-looking with a slight curious smile. Jazmyn is the elder of
-        them all, the first hoodie baby to arrive.</div>
-        <div class='card'><b>Shadows — the protectors</b><br>
+        Fortress Rooted have a more animal-like face, and Bea Bee's is
+        animal-looking and grouchy. Their faces are grouchy, sleepy,
+        slight smile, or happy — every character's face different from
+        the others. Bea Bee controls only the woods; she grants powers
+        to others, and no leader is over the other leaders.</div>
+        <div class='card theme-sky'><b>Windyworrors — rulers of the sky</b><br>
+        Led by <b>Me,Me Gal</b>, ruler of the sky and elder of them all,
+        the first hoodie baby to arrive. Glowing diamond head, black
+        eyes, all-black hoodie with stones of every different color,
+        hoodie over her face, wand with a fire-red tip. Windyworrors
+        have more angel-like faces, and Me,Me Gal's is angel-looking
+        with a slight curious smile. Their faces are curious,
+        suspicious, or happy — every character's face different from
+        the others. Me,Me Gal runs the Reds but is not over the other
+        leaders: each leader controls only their own tribe and
+        environment, and leaders grant powers to others.</div>
+        <div class='card theme-underground'><b>Shadows — the protectors</b><br>
         The Shadows have no leader: they are protectors, underground-raised,
         and they just pop up out of anywhere. They mean no harm, but they
         are out to get what they can to go back underground. All Shadows
         carry Diamond eyes and all-white hoodies with black stones, and
-        their faces are angry creature-like. Once a week, one Shadow pops
-        up in the Shop for $10.00. Trading for a Shadow between players
-        starts at 1,200 points.</div>
-        <div class='card'><b>The 3 Gods — over everyone</b><br>
-        There are only 3 gods, and they are over everyone. Purchase:
-        $40.00 each — buy one in the <a href='/shop'>Shop</a> with
-        PayPal or Cash App Pay (test mode, no real money moves).
-        Their trades are almost impossible — but don't get discouraged:
-        more gods will arrive over new tribes.</div>
+        their faces are angry creature-like — mean or sneaky — every
+        character's face different from the others. Once a week, one
+        Shadow pops up in the Shop for $10.00. Trading for a Shadow
+        between players starts at 1,200 points.</div>
+        <div class='card theme-underground'><b>The 3 Gods — over everyone</b><br>
+        There are only 3 gods, and they are over everyone: they run the
+        underworld, and they have power over the universe until new gods
+        arrive. Pop-ups are underworld babies, kept by the gods for the
+        harm they can bring. Purchase: $40.00 each — buy one in the
+        <a href='/shop'>Shop</a> with PayPal or Cash App Pay (test mode,
+        no real money moves). Their trades are almost impossible — but
+        don't get discouraged: more gods will arrive over new tribes.</div>
         <div class='card'><b>Stones on every hoodie</b><br>
         Gods' hoodies carry 15 rhinestones, leaders' hoodies carry 10,
         and every villager's hoodie carries 5 — drifters, specials,
@@ -2105,7 +2232,7 @@ class Handler(BaseHTTPRequestHandler):
         <div class='card'><b>Prices</b><br>
         Leaders: $10.00 to purchase, and everyone is free to purchase a
         leader — buy one in the <a href='/shop'>Shop</a>, choosing 1 of
-        the 3 leaders (Damiana June, Aaliyah Bee, Jazmyn); each leader
+        the 3 leaders (Snoot-Duie, Bea Bee, Me,Me Gal); each leader
         is unique, so once one is sold it is gone. Individual
         characters: $1.99 to purchase — buy one in the
         <a href='/shop'>Shop</a> with PayPal or Cash App Pay (test
@@ -2122,7 +2249,7 @@ class Handler(BaseHTTPRequestHandler):
         Winter collections are coming. As characters are added, everyone
         gets a notice that they are available and where they were found —
         see the <a href='/notices'>Notices</a> board.</div>
-        <p>These leaders are the founders of a new world.</p>""" + standings
+        <p>These leaders are the founders of a new world. Each leader controls only their own tribe and environment, and leaders grant powers to others — no leader is over the other leaders.</p>""" + standings
         self.send_html(page("The World of Hoodie Babies", body, user))
 
     def notices(self, con, user):
@@ -2326,7 +2453,8 @@ class Handler(BaseHTTPRequestHandler):
         user_id = cur.lastrowid
         # The free baby is the chosen character with the chosen name,
         # using the tribe's default pattern, rhinestones, and face.
-        mint_baby(con, user_id, tribe=tribe, name=baby_name)
+        mint_baby(con, user_id, tribe=tribe, name=baby_name,
+              face=face_for(roster_name, tribe, STARTERS[tribe]["face"]))
         # Invite bonus: the inviter gets +20 points, balance AND earned
         # (invite bonuses are earned, not bought).
         if pending["invited_by"]:
@@ -3114,7 +3242,7 @@ class Handler(BaseHTTPRequestHandler):
                 frac = picks[it["cert"]]
                 sale = deal_price(it["price"], frac)
                 pct = "25% off" if frac == 0.25 else "half off"
-                body += ("<div class='card'><div style='text-align:center'>"
+                body += ("<div class='card %s'><div style='text-align:center'>"
                          "%s</div><b>%s</b> %s "
                          "<span class='tag'>%s</span> "
                          "<span class='tag'>%s</span><br>"
@@ -3122,7 +3250,7 @@ class Handler(BaseHTTPRequestHandler):
                          "Face: %s<br>"
                          "Price: <s>$%s</s> <b>$%s</b> (%s)<br>"
                          "<a href='/baby/%s'>View baby — zoom &amp; "
-                         "spin</a></div>" % (
+                         "spin</a></div>" % (theme_class(it["tribe"]), 
                              baby_img_html(it),
                              esc(it["name"]),
                              gender_marker(baby_gender(it["tribe"],
@@ -3169,14 +3297,14 @@ class Handler(BaseHTTPRequestHandler):
         for it in items:
             if it["cert"] in picks:
                 continue
-            body += ("<div class='card'><div style='text-align:center'>"
+            body += ("<div class='card %s'><div style='text-align:center'>"
                      "%s</div><b>%s</b> %s "
                      "<span class='tag'>%s</span> "
                      "<span class='tag'>%s</span><br>"
                      "Hoodie: %s<br>Rhinestones: %s<br>Stones: %d<br>"
                      "Face: %s<br>"
                      "Price: $%s<br><a href='/baby/%s'>View baby — "
-                     "zoom &amp; spin</a></div>" % (
+                     "zoom &amp; spin</a></div>" % (theme_class(it["tribe"]), 
                          baby_img_html(it),
                          esc(it["name"]),
                          gender_marker(baby_gender(it["tribe"],
@@ -3212,14 +3340,14 @@ class Handler(BaseHTTPRequestHandler):
         leaders = con.execute(
             "SELECT * FROM leaders ORDER BY id").fetchall()
         for ld in leaders:
-            body += ("<div class='card'><div style='text-align:center'>"
+            body += ("<div class='card %s'><div style='text-align:center'>"
                      "%s</div><b>%s</b> %s "
                      "<span class='tag'>%s</span> "
                      "<span class='tag'>%s</span><br>"
                      "Hoodie: %s<br>Rhinestones: %s<br>Stones: %d<br>"
                      "Face: %s<br>"
                      "Price: $%s%s<br><a href='/baby/%s'>View baby — "
-                     "zoom &amp; spin</a></div>" % (
+                     "zoom &amp; spin</a></div>" % (theme_class(ld["tribe"]), 
                          baby_img_html(ld),
                          esc(ld["name"]),
                          gender_marker(baby_gender(ld["tribe"],
@@ -3255,12 +3383,12 @@ class Handler(BaseHTTPRequestHandler):
                  "once.</p>" % (PRICE_GOD, GOD_COUNT))
         gods = con.execute("SELECT * FROM gods ORDER BY id").fetchall()
         for g in gods:
-            body += ("<div class='card'><div style='text-align:center'>"
+            body += ("<div class='card %s'><div style='text-align:center'>"
                      "%s</div><b>%s</b> %s "
                      "<span class='tag'>%s</span><br>"
                      "Stones: 15<br>"
                      "Price: $%s%s<br><a href='/baby/%s'>View baby — "
-                     "zoom &amp; spin</a></div>" % (
+                     "zoom &amp; spin</a></div>" % (theme_class("Gods"), 
                          baby_img_html({"name": g["name"], "cert": g["cert"],
                                        "tribe": "Gods",
                                        "hoodie_pattern": "God Crown",

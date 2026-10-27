@@ -76,25 +76,37 @@ Then open **http://127.0.0.1:8090** in a browser.
   bought). "My Collection" shows the private line "Invite bonus: +20
   points × N invites" on the inviter's own page only.
 - **World page:** the tribes and leaders as specified —
-  Waterliewaveminans, rulers over water, led by Damiana June (Controller
+  Waterliewaveminans, rulers over water, led by Snoot-Duie (Controller
   of Water, blue slanted eyes, fish-like face with a surprised crying
   look, rare, purchasable when live); the Waterliewaveminans run the sea
   and have only five characters, not including her (Marina, Coral, Pearl,
   Tide, Kai — sea and ocean names); Fortress Rooted, rulers of the
-  forest, led by Aaliyah Bee (red stone in the middle of her forehead,
+  forest, led by Bea Bee (red stone in the middle of her forehead,
   keeper of the woods and animals, animal-looking grouchy face);
-  Windyworrors, led by Jazmyn, ruler of the sky, more powerful than the
-  other controllers (glowing diamond head, black eyes, all-black hoodie
-  with stones of every different color, hoodie over her face, wand with a
-  fire-red tip, angel-looking face with a slight curious smile — Jazmyn
-  is the elder of them all, the first hoodie baby to arrive); Shadows ARE
-  the protectors (no ruler, underground-raised, they pop up out of
-  anywhere, mean no harm, Diamond eyes, all-white hoodies with black
-  stones, angry creature-like faces). Faces: Waterliewaveminans
-  fish-like, Fortress Rooted animal-like, Windyworrors angel-like,
-  Shadows angry creature-like. Tribe colors stay the same; only the
-  names changed (internal tribe keys Blues/Browns/Reds/Blacks are
-  unchanged in the database).
+  Windyworrors, led by Me,Me Gal, ruler of the sky (glowing diamond head,
+  black eyes, all-black hoodie with stones of every different color,
+  hoodie over her face, wand with a fire-red tip, angel-looking face
+  with a slight curious smile — Me,Me Gal is the elder of them all, the
+  first hoodie baby to arrive, and she runs the Reds but is not over the
+  other leaders); Shadows ARE the protectors (no ruler,
+  underground-raised, they pop up out of anywhere, mean no harm, Diamond
+  eyes, all-white hoodies with black stones, angry creature-like faces).
+  Leaders each control only their own tribe and environment and grant
+  powers to others (lore only — no grant-powers mechanic in the app).
+  The 3 gods run the underworld and have power over the universe until
+  new gods arrive; pop-ups are underworld babies kept by the gods for
+  the harm they can bring. Faces: Waterliewaveminans fish-like,
+  Fortress Rooted animal-like, Windyworrors angel-like, Shadows angry
+  creature-like — and every character's face description is unique
+  within its tribe (Blues surprised/happy/scary; Browns grouchy/sleepy/
+  slight smile/happy; Reds curious/suspicious/happy; Shadows mean/
+  sneaky; pop-up variants curious/scared/aware). Cards and World
+  sections are themed by environment (water / woods / sky /
+  underground). Tribe colors stay the same; only the names changed
+  (internal tribe keys Blues/Browns/Reds/Blacks are unchanged in the
+  database). Realistic photos were NOT regenerated: their faces and
+  backgrounds are unchanged; only descriptions, names, lore, and UI
+  theming were updated.
 - **Stones on every hoodie:** gods' hoodies carry **15** rhinestones,
   leaders' hoodies carry **10**, every villager's hoodie carries **5**
   (drifters, specials, rares, and Shadows included). The counts show on
@@ -126,7 +138,7 @@ Then open **http://127.0.0.1:8090** in a browser.
   grants nothing, and an already-sold item grants nothing. Checkout
   runs in **PayPal sandbox / Stripe test mode by default: no real
   money moves**. Leader purchases let the buyer choose 1 of the 3
-  leaders (Damiana June, Aaliyah Bee, Jazmyn); each leader is unique,
+  leaders (Snoot-Duie, Bea Bee, Me,Me Gal); each leader is unique,
   so once one is sold it is gone, and a bought leader joins the
   buyer's collection and trades like any other baby. God purchases
   grant 1 of the 3 named gods — **Muzle Back, Baraka, Sirus V** (names
@@ -189,8 +201,8 @@ Then open **http://127.0.0.1:8090** in a browser.
   - **Shadow** — **$10.00**, one copy (see "Shadows" above).
   Every pop-up baby counts toward its owner's village.
 - **Tribe ownership:** buying a tribe's leader makes the buyer the Owner
-  of that tribe — Damiana June owns the Blues, Aaliyah Bee owns the
-  Browns, Jazmyn owns the Reds. The Owner title shows on the World page
+  of that tribe — Snoot-Duie owns the Blues, Bea Bee owns the
+  Browns, Me,Me Gal owns the Reds. The Owner title shows on the World page
   and on the owner's own collection page. If the leader is traded away,
   ownership passes to the new holder (same follows-ownership rule as
   the trade-slot perk). 2nd and 3rd places per tribe are the two users
