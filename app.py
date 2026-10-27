@@ -4821,9 +4821,10 @@ class Handler(BaseHTTPRequestHandler):
         controls = ""
         if user:
             controls = (
-                "<div style='position:fixed;left:0;right:0;bottom:0;"
-                "background:rgba(255,255,255,0.95);padding:8px;"
-                "box-sizing:border-box'>"
+                "<div style='background:#fff;padding:8px;"
+                "box-sizing:border-box;border-top:1px solid #ccc'>"
+                "<div id='fightmsg' style='font-size:14px;"
+                "min-height:18px;text-align:center'></div>"
                 "<div style='text-align:center'>"
                 "<button onclick='move(0,-6)'>⬆️</button><br>"
                 "<button onclick='move(-4,0)'>⬅️</button> "
@@ -4838,8 +4839,8 @@ class Handler(BaseHTTPRequestHandler):
                 "<button>Send</button></form></div>")
         else:
             controls = (
-                "<div style='position:fixed;left:0;right:0;bottom:0;"
-                "background:rgba(255,255,255,0.95);padding:10px;"
+                "<div style='background:#fff;padding:10px;"
+                "border-top:1px solid #ccc;"
                 "text-align:center'><a href='/login'>Log in</a> or "
                 "<a href='/signup'>sign up</a> to walk around and "
                 "chat — you can watch everyone else meanwhile.</div>")
@@ -4848,31 +4849,35 @@ class Handler(BaseHTTPRequestHandler):
             "font-size:52px' aria-hidden='true'>%s</span>"
             % (lx, ty, tree)
             for lx, ty, tree in
-            [(4, 12, "🌳"), (88, 10, "🌲"), (12, 62, "🌲"),
-             (82, 58, "🌳"), (48, 8, "🌳")])
+            [(4, 15, "🌳"), (88, 12, "🌲"), (12, 70, "🌲"),
+             (82, 65, "🌳"), (48, 18, "🌳")])
         html = ("<!DOCTYPE html><html><head><meta charset='utf-8'>"
                 "<meta name='viewport' content='width=device-width,"
                 "initial-scale=1'>"
                 "<title>Live World — Hoodie Babies</title>"
                 "<style>html,body{margin:0;padding:0;font-family:"
-                "system-ui,sans-serif} button{padding:10px 14px;"
+                "system-ui,sans-serif} body{display:flex;"
+                "flex-direction:column;height:100vh;height:100dvh;"
+                "overflow:hidden} button{padding:10px 14px;"
                 "font-size:18px} a{color:#14532d}</style>"
-                "</head><body><div id='field' style='position:"
-                "relative;height:100vh;overflow:hidden;"
-                "background:linear-gradient(#bfe3ff 0 30%,#b7e39a "
-                "30%);'>"
-                "<div style='padding:12px'><h1 style='margin:0'>"
-                "🌍 Live World</h1><p style='margin:4px 0'>"
-                "Walk around with other players and chat live. "
+                "</head><body>"
+                "<div style='padding:6px 10px;display:flex;"
+                "flex-wrap:wrap;gap:8px;align-items:center;"
+                "justify-content:space-between;background:#fff;"
+                "border-bottom:1px solid #ccc'><b>🌍 Live World</b>"
+                "<span style='font-size:13px'>"
                 "<a href='/play'>Play scene</a> | "
                 "<a href='/village'>Village list</a> | "
-                "<a href='/me'>My Collection</a></p>"
-                "<div id='chatlog' style='max-height:90px;"
-                "overflow:auto;background:rgba(255,255,255,0.7);"
-                "border-radius:10px;padding:6px;font-size:14px'>"
-                "</div><div id='fightmsg' style='font-size:14px;"
-                "min-height:18px'></div></div>" + trees +
-                "<div id='players'></div></div>" + controls +
+                "<a href='/me'>My Collection</a></span></div>"
+                "<div id='field' style='position:relative;flex:1;"
+                "min-height:0;overflow:hidden;"
+                "background:linear-gradient(#bfe3ff 0 30%,#b7e39a "
+                "30%);'>" + trees +
+                "<div id='players'></div></div>"
+                "<div id='chatlog' style='max-height:64px;"
+                "overflow:auto;padding:6px 10px;font-size:13px;"
+                "background:#f5f5f5;border-top:1px solid #ccc'>"
+                "</div>" + controls +
                 "<script>var CSRF='" + esc(self._csrf_token or "") + "';"
                 "var ME=" + json.dumps(me) + ";var POS=null;"
                 "function esc(s){return s.replace(/&/g,'&amp;')"

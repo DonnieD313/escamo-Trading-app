@@ -3054,6 +3054,9 @@ def main():
             check("live world page loads with field and controls",
                   "Live World" in live and "🌳" in live
                   and "play_state" in live)
+            check("live layout stacks without fixed overlays",
+                  "100dvh" in live and "flex:1" in live
+                  and "position:fixed" not in live)
             s, moved = post(sh, "/play_move",
                             {"x": "30", "y": "40"}, base=pbase)
             check("signed-in move is accepted",
