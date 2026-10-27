@@ -3000,6 +3000,25 @@ def main():
                 (sh2_baby["id"],)).fetchone()
             check("keep leaves colors untouched",
                   kept["color_theme"] is None)
+            # (j) Recruit after keep: fully joins the player's tribe.
+            recs = pcongs.execute(
+                "SELECT * FROM recruit_choices WHERE offer_id=?",
+                (trade_offer["id"],)).fetchall()
+            check("keep opens a recruit choice, recolor does not",
+                  len(recs) == 1
+                  and recs[0]["baby_id"] == sh2_baby["id"])
+            s, offers2 = get(sh, "/offers", base=pbase)
+            check("offers page shows the recruit choice",
+                  "Recruit into your tribe" in offers2)
+            s, _ = post(sh, "/recruit",
+                        {"choice_id": recs[0]["id"],
+                         "decision": "recruit"}, base=pbase)
+            recruited = pcongs.execute(
+                "SELECT * FROM babies WHERE id=?",
+                (sh2_baby["id"],)).fetchone()
+            check("recruit fully joins the player's tribe",
+                  recruited["tribe"] == "Blues"
+                  and recruited["color_theme"] is None)
             pcongs.close()
             pcong4.close()
             pcong5.close()

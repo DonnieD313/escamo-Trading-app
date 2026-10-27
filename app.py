@@ -826,6 +826,19 @@ def init_db():
         status TEXT NOT NULL DEFAULT 'pending',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
+    # Recruit choice: offered only after a player chooses Keep on a
+    # color choice. Recruiting fully moves the baby into the player's
+    # tribe (tribe column changes, colors follow) — unlike recoloring,
+    # which only restyles the card.
+    con.execute("""
+    CREATE TABLE IF NOT EXISTS recruit_choices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        baby_id INTEGER NOT NULL REFERENCES babies(id),
+        offer_id INTEGER NOT NULL REFERENCES offers(id),
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )""")
     # Migration for the tribe renames: rewrite old tribe names in the
     # Notices board so no user-facing page still shows them.
     for old, new in (("Blacks", "Shadows"),
@@ -2173,6 +2186,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.do_points_cancel(con, user)
             elif path == "/recolor":
                 self.do_recolor(con, user)
+            elif path == "/recruit":
+                self.do_recruit(con, user)
             elif path == "/shelf_add":
                 self.do_shelf_add(con, user)
             elif path == "/shelf_remove":
@@ -2808,6 +2823,13 @@ class Handler(BaseHTTPRequestHandler):
             body += ("<p><a href='/offers'>You have a color choice "
                      "waiting</a> for a baby you traded for — keep its "
                      "original colors or match your tribe's.</p>")
+        n_recruit = con.execute(
+            "SELECT COUNT(*) FROM recruit_choices WHERE user_id=? AND "
+            "status='pending'", (user["id"],)).fetchone()[0]
+        if n_recruit:
+            body += ("<p><a href='/offers'>You have a recruit choice "
+                     "waiting</a> — bring a kept baby fully into your "
+                     "tribe, or leave it as is.</p>")
         if query.get("msg"):
             body += "<p class='ok'>%s</p>" % esc(query["msg"][0])
         owned = user_owned_tribes(con, user["id"])
@@ -3063,6 +3085,34 @@ class Handler(BaseHTTPRequestHandler):
                              "</form>" % (c["id"],
                                           esc(tribe_display(my_tribe))))
                 body += "</div>"
+        recruits = con.execute(
+            "SELECT recruit_choices.*, babies.name AS baby_name FROM "
+            "recruit_choices JOIN babies ON babies.id = "
+            "recruit_choices.baby_id WHERE recruit_choices.user_id=? "
+            "AND recruit_choices.status='pending' ORDER BY id",
+            (user["id"],)).fetchall()
+        if recruits:
+            body += ("<h2>Recruit into your tribe</h2>"
+                     "<p>You kept these babies' original colors. You "
+                     "can also fully recruit one into your tribe — "
+                     "it then counts as your tribe everywhere, and "
+                     "its colors change to match.</p>")
+            for c in recruits:
+                body += ("<div class='card'><b>%s</b> — "
+                         "<form method='post' action='/recruit' "
+                         "style='display:inline'>"
+                         "<input type='hidden' name='choice_id' "
+                         "value='%d'><input type='hidden' "
+                         "name='decision' value='recruit'>"
+                         "<button>Recruit into my tribe</button>"
+                         "</form> "
+                         "<form method='post' action='/recruit' "
+                         "style='display:inline'>"
+                         "<input type='hidden' name='choice_id' "
+                         "value='%d'><input type='hidden' "
+                         "name='decision' value='leave'>"
+                         "<button>Leave as is</button></form></div>"
+                         % (esc(c["baby_name"]), c["id"], c["id"]))
         body += "<h2>Incoming offers</h2>"
         body += "".join(offer_block(o, True) for o in incoming) or "<p>None.</p>"
         body += "<h2>Outgoing offers</h2>"
@@ -3282,7 +3332,38 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     con.execute("UPDATE babies SET color_theme=NULL "
                                 "WHERE id=?", (baby["id"],))
+                    # Keeping the original colors opens the recruit
+                    # choice: the player may later fully bring this
+                    # baby into their own tribe.
+                    con.execute("INSERT INTO recruit_choices (user_id, "
+                                "baby_id, offer_id) VALUES (?,?,?)",
+                                (user["id"], baby["id"], c["offer_id"]))
             con.execute("UPDATE recolor_choices SET status='done' "
+                        "WHERE id=?", (c["id"],))
+            con.commit()
+        self.redirect("/offers")
+
+    def do_recruit(self, con, user):
+        """Settle a recruit choice. Recruiting fully moves the baby
+        into the player's tribe: the tribe column changes and the
+        card colors follow it (any recolor styling is cleared)."""
+        if self.need_login(user):
+            return
+        f = self.form()
+        c = con.execute("SELECT * FROM recruit_choices WHERE id=? AND "
+                        "user_id=? AND status='pending'",
+                        (f.get("choice_id"), user["id"])).fetchone()
+        if c:
+            baby = con.execute("SELECT * FROM babies WHERE id=?",
+                               (c["baby_id"],)).fetchone()
+            if baby and baby["owner_id"] == user["id"] \
+                    and f.get("decision") == "recruit":
+                tribe = user_tribe(con, user)
+                if tribe:
+                    con.execute("UPDATE babies SET tribe=?, "
+                                "color_theme=NULL WHERE id=?",
+                                (tribe, baby["id"]))
+            con.execute("UPDATE recruit_choices SET status='done' "
                         "WHERE id=?", (c["id"],))
             con.commit()
         self.redirect("/offers")
