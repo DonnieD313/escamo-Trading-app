@@ -3157,15 +3157,18 @@ def main():
                   and "leg leg-l" in liveb and "arm arm-l" in liveb
                   and "antenna" not in liveb and "robostep" in liveb
                   and "p.avatar" in liveb and "me-ava" in liveb
-                  and "46px;height:46px" in liveb
-                  and "width:56px;height:36px" in liveb)
-            check("town world has shops, street, planters and houses",
-                  "#1e7a34" in liveb and "#3a3a3a" in liveb
+                  and "52px;height:52px" in liveb
+                  and "width:60px;height:38px" in liveb
+                  and "46px;height:46px" not in liveb)
+            check("forest field has grass, clouds, trees and houses",
+                  "#1e7a34" in liveb and "#7cc24a" in liveb
                   and "hide here" in liveb
                   and "butterfly" not in liveb
-                  and "Hoodie Shop" in liveb and "Trading Post" in liveb
+                  and "Hoodie Shop" not in liveb
+                  and "#3a3a3a" not in liveb
                   and "id='world'" in liveb and "_CAMX" in liveb
-                  and "linear-gradient(#0d3b38 0 30%,#155e57 30%)" not in liveb)
+                  and "drift" in liveb and "sway" in liveb
+                  and "Forest" in liveb)
             check("taps on characters are no longer ignored",
                   "closest('#players')" not in liveb)
             check("live page has no arrow buttons",

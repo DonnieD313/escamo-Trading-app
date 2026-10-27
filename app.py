@@ -2078,6 +2078,7 @@ class Handler(BaseHTTPRequestHandler):
         data = body.encode()
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(data)))
         self._send_csrf_cookie()
         self.end_headers()
@@ -4877,39 +4878,27 @@ class Handler(BaseHTTPRequestHandler):
                 "text-align:center'><a href='/login'>Log in</a> or "
                 "<a href='/signup'>sign up</a> to walk around and "
                 "chat — you can watch everyone else meanwhile.</div>")
-        def planter_tree(lx, ty):
+        def blocky_tree(lx, ty):
             return ("<div style='position:absolute;left:%d%%;top:%d%%;"
                     "width:44px;margin-left:-22px;text-align:center'"
                     " aria-hidden='true'>"
-                    "<div style='width:34px;height:24px;background:#1e7a34;"
+                    "<div class='canopy' style='width:36px;height:28px;background:#1e7a34;"
                     "border:3px solid #14532d;border-radius:4px;margin:0 auto'></div>"
-                    "<div style='width:40px;height:14px;background:#7a4a21;"
-                    "border:3px solid #5b3a1a;margin:0 auto'></div></div>"
-                    % (lx, ty))
-        trees = "".join(planter_tree(lx, ty) for lx, ty in
-                         [(6, 45), (92, 45), (20, 60), (80, 62),
-                          (50, 88), (12, 82), (88, 82), (38, 52)])
-        def shop_block(lx, color, name):
-            return ("<div style='position:absolute;left:%d%%;top:2%%;"
-                    "width:21%%;height:20%%;background:%s;"
-                    "border:3px solid #555;text-align:center'"
-                    " aria-hidden='true'>"
-                    "<div style='background:#d4af37;color:#222;"
-                    "font-size:11px;font-weight:bold;padding:2px'>%s</div>"
-                    "<div style='display:flex;justify-content:space-around;"
-                    "margin-top:8px'><div style='width:22%%;height:30px;"
-                    "background:#223'></div><div style='width:22%%;height:30px;"
-                    "background:#223'></div></div></div>"
-                    % (lx, color, name))
-        town = ("<div style='position:absolute;left:0;right:0;top:28%;"
-                "height:7%;background:#3a3a3a'></div>"
-                "<div style='position:absolute;left:0;right:0;top:31%;"
-                "border-top:3px dashed #f0c75e'></div>"
-                + "".join(shop_block(lx, color, name) for lx, color, name in
-                           [(2, "#e8e8e8", "Hoodie Shop"),
-                            (27, "#d4d4d4", "Trading Post"),
-                            (52, "#f0e6d2", "Snack Stop"),
-                            (77, "#dbe7f0", "Baby Boutique")]))
+                    "<div style='width:10px;height:18px;background:#7a4a21;"
+                    "margin:0 auto'></div></div>" % (lx, ty))
+        trees = "".join(blocky_tree(lx, ty) for lx, ty in
+                         [(6, 40), (92, 42), (20, 58), (80, 60),
+                          (58, 88), (12, 80), (88, 80), (38, 50),
+                          (65, 45), (30, 75), (55, 65), (75, 85)])
+        grass = ("<div style='position:absolute;left:0;top:0;width:100%;"
+                 "height:100%;background:repeating-linear-gradient(90deg,"
+                 "#7cc24a 0 120px,#74b845 120px 240px)'></div>")
+        def drift_cloud(top, dur):
+            return ("<div style='position:absolute;top:%d%%;font-size:52px;"
+                    "animation:drift %ds linear infinite' aria-hidden='true'>☁️</div>"
+                    % (top, dur))
+        clouds = "".join(drift_cloud(top, dur) for top, dur in
+                          [(5, 90), (12, 120), (18, 75), (8, 105)])
         def blocky_house(lx, ty, color):
             return ("<div style='position:absolute;left:%d%%;top:%d%%;"
                     "width:88px;margin-left:-44px;margin-top:-51px;text-align:center;z-index:5'"
@@ -4929,11 +4918,6 @@ class Handler(BaseHTTPRequestHandler):
         houses = "".join(blocky_house(lx, ty, color) for lx, ty, color in
                           [(25, 48, "#f0d9a0"), (70, 70, "#cfe3f5"),
                            (42, 88, "#f5c6c6")])
-        clouds = "".join(
-            "<span style='position:absolute;left:%d%%;top:%d%%;'"
-            "font-size:40px' aria-hidden='true'>☁️</span>"
-            % (lx, ty)
-            for lx, ty in [(8, 4), (62, 7), (38, 2)])
         html = ("<!DOCTYPE html><html><head><meta charset='utf-8'>"
                 "<meta name='viewport' content='width=device-width,"
                 "initial-scale=1'>"
@@ -4954,6 +4938,9 @@ class Handler(BaseHTTPRequestHandler):
                 "steps(2,end) infinite alternate-reverse} "
                 ".walking .arm-r{animation:robostep .4s "
                 "steps(2,end) infinite alternate} "
+                "@keyframes drift{from{left:-12%}to{left:112%}} "
+                ".canopy{animation:sway 3.2s ease-in-out infinite alternate;transform-origin:50% 100%} "
+                "@keyframes sway{from{transform:rotate(-2deg)}to{transform:rotate(2deg)}} "
                 ".idle{animation:bob 1.6s ease-in-out infinite alternate} "
                 "@keyframes bob{from{transform:translate(-50%,-50%)}"
                 "to{transform:translate(-50%,-54%)}} "
@@ -4973,7 +4960,7 @@ class Handler(BaseHTTPRequestHandler):
                 "flex-wrap:wrap;gap:8px;align-items:center;"
                 "justify-content:space-between;background:#0d3b38;"
                 "border-bottom:4px solid #d4af37'><b "
-                "style='color:#f0c75e'>🌍 Live World</b>"
+                "style='color:#f0c75e'>🌍 Live World</b><span style='font-size:12px;color:#f0c75e;border:1px solid #d4af37;border-radius:8px;padding:1px 6px;margin-left:6px'>🌳 Forest</span>"
                 "<span id='zonelabel' style='font-size:13px;color:#f0c75e'></span>"
                 "<span style='font-size:13px'>"
                 "<a href='/play'>Play scene</a> | "
@@ -4982,7 +4969,7 @@ class Handler(BaseHTTPRequestHandler):
                 "<a href='/me'>My Collection</a></span></div>"
                 "<div id='field' style='position:relative;flex:1;"
                 "min-height:0;overflow:hidden;touch-action:none;"
-                "background:#c9c9c9'>"
+                "background:#7cc24a'>"
                 "<div id='world' style='position:absolute;width:200%;"
                 "height:200%;left:-50%;top:-50%;transition:left .6s linear,"
                 "top .6s linear'>"
@@ -5001,7 +4988,7 @@ class Handler(BaseHTTPRequestHandler):
                 "<div style='position:absolute;left:2%;top:70%;"
                 "font-size:13px;background:#0d3b38;color:#f0c75e;"
                 "border-radius:8px;padding:1px 6px'>🌲 Fortress "
-                "Rooted village</div>" + town + trees +
+                "Rooted village</div>" + grass + clouds + trees +
                 "<div id='players'></div><div id='items'></div>" + houses + "</div></div>"
                 "<div id='chatlog' style='max-height:64px;"
                 "overflow:auto;padding:6px 10px;font-size:13px;"
@@ -5011,7 +4998,7 @@ class Handler(BaseHTTPRequestHandler):
                 "var ME=" + json.dumps(me) + ";var POS=null;"
                 "function esc(s){return s.replace(/&/g,'&amp;')"
                 ".replace(/</g,'&lt;');}"
-                "function robotHTML(p){var c={Blues:'#2b5ea7',Browns:'#7a4a21',Reds:'#c0392b'}[p.tribe]||'#2b5ea7';var tmp=document.createElement('div');tmp.innerHTML=p.avatar;var im=tmp.querySelector('img');var src=im?im.getAttribute('src'):'';var head=src?\"<img src='\"+src+\"' style='width:46px;height:46px;object-fit:cover;object-position:50% 22%;border:3px solid \"+c+\";border-radius:2px;display:block;margin:0 auto'>\":\"<div style='width:46px;height:46px;background:\"+c+\";border:3px solid #333;border-radius:2px;margin:0 auto;font-size:24px;line-height:46px'>🧸</div>\";return \"<div style='width:64px;margin:0 auto'>\"+head+\"<div style='width:56px;height:36px;background:\"+c+\";border:3px solid #333;border-radius:4px;margin:2px auto 0;position:relative'><span style='position:absolute;left:8px;top:8px;color:#ffd700'>✦</span><span style='position:absolute;left:22px;top:14px;color:#ffd700'>✦</span><span style='position:absolute;left:36px;top:6px;color:#ffd700'>✦</span><span class='arm arm-l' style='position:absolute;left:-14px;top:2px;width:12px;height:30px;background:#333;border-radius:3px'></span><span class='arm arm-r' style='position:absolute;right:-14px;top:2px;width:12px;height:30px;background:#333;border-radius:3px'></span></div><div style='display:flex;justify-content:center;gap:6px'><div class='leg leg-l' style='width:14px;height:20px;background:#333;border-radius:3px'></div><div class='leg leg-r' style='width:14px;height:20px;background:#333;border-radius:3px'></div></div></div>\";}"
+                "function robotHTML(p){var c={Blues:'#2b5ea7',Browns:'#7a4a21',Reds:'#c0392b'}[p.tribe]||'#2b5ea7';var tmp=document.createElement('div');tmp.innerHTML=p.avatar;var im=tmp.querySelector('img');var src=im?im.getAttribute('src'):'';var head=src?\"<img src='\"+src+\"' style='width:52px;height:52px;object-fit:cover;object-position:50% 22%;border:3px solid \"+c+\";border-radius:2px;display:block;margin:0 auto'>\":\"<div style='width:52px;height:52px;background:\"+c+\";border:3px solid #333;border-radius:2px;margin:0 auto;font-size:26px;line-height:52px'>🧸</div>\";return \"<div style='width:74px;margin:0 auto'>\"+head+\"<div style='width:60px;height:38px;background:\"+c+\";border:3px solid #333;border-radius:4px;margin:2px auto 0;position:relative'><span style='position:absolute;left:9px;top:9px;color:#ffd700'>✦</span><span style='position:absolute;left:24px;top:15px;color:#ffd700'>✦</span><span style='position:absolute;left:39px;top:7px;color:#ffd700'>✦</span><span class='arm arm-l' style='position:absolute;left:-15px;top:2px;width:13px;height:32px;background:#333;border-radius:3px'></span><span class='arm arm-r' style='position:absolute;right:-15px;top:2px;width:13px;height:32px;background:#333;border-radius:3px'></span></div><div style='display:flex;justify-content:center;gap:6px'><div class='leg leg-l' style='width:15px;height:22px;background:#333;border-radius:3px'></div><div class='leg leg-r' style='width:15px;height:22px;background:#333;border-radius:3px'></div></div></div>\";}"
 "function render(st){window._ST=st;var h='';"
                 "st.players.forEach(function(p,i){"
                 "if(p.you&&!POS){POS={x:p.x,y:p.y};}"
