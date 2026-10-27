@@ -3046,6 +3046,9 @@ def main():
                   and "● Online" in play
                   and "shelfy2's village" in play
                   and "● Away" in play)
+            check("play field has trees and babies at play",
+                  "🌳" in play and "play-baby" in play
+                  and "@keyframes hop" in play)
             pcongs.close()
             pcong4.close()
             pcong5.close()

@@ -4498,10 +4498,15 @@ class Handler(BaseHTTPRequestHandler):
             you = (" <b>(You)</b>" if user and user["id"] == p["id"]
                    else "")
             shown = babies[:12]
+            # Babies at play: each one hops on the spot, staggered
+            # so the field looks alive instead of posed.
             figs = "".join(
-                "<a href='/baby/%s' title='%s'>%s</a>"
-                % (esc(b["cert"]), esc(b["name"]), baby_img_html(b, 72))
-                for b in shown)
+                "<span class='play-baby' style='display:inline-block;"
+                "animation-delay:%.2fs'><a href='/baby/%s' "
+                "title='%s'>%s</a></span>"
+                % (i * 0.15, esc(b["cert"]), esc(b["name"]),
+                   baby_img_html(b, 72))
+                for i, b in enumerate(shown))
             more = ""
             if len(babies) > len(shown):
                 more = ("<p><a href='/village'>+%d more babies in %s's "
@@ -4524,13 +4529,24 @@ class Handler(BaseHTTPRequestHandler):
             "<p><a href='/login'>Log in</a> or "
             "<a href='/signup'>sign up</a> to appear in the scene "
             "yourself.</p>")
+        # Trees lining the field, so the babies play under them.
+        trees = ("<div style='font-size:52px;line-height:1;"
+                 "letter-spacing:18px' aria-hidden='true'>"
+                 "🌳🌲🌳🌲🌳🌲🌳</div>"
+                 "<div style='font-size:28px;line-height:1;"
+                 "letter-spacing:24px' aria-hidden='true'>"
+                 "🌼⚽🌼🦋🌼</div>")
         html = ("<!DOCTYPE html><html><head><meta charset='utf-8'>"
                 "<meta name='viewport' content='width=device-width,"
                 "initial-scale=1'>"
                 "<meta http-equiv='refresh' content='60'>"
                 "<title>Play — Hoodie Babies Village</title>"
                 "<style>html,body{margin:0;padding:0;font-family:"
-                "system-ui,sans-serif} a{color:#14532d}</style>"
+                "system-ui,sans-serif} a{color:#14532d} "
+                "@keyframes hop{from{transform:translateY(0)}"
+                "to{transform:translateY(-10px)}} "
+                ".play-baby{animation:hop .9s ease-in-out infinite "
+                "alternate}</style>"
                 "</head><body><div style='min-height:100vh;"
                 "background:linear-gradient(#bfe3ff 0 35%,#d9f0c0 35%);"
                 "padding:16px;box-sizing:border-box'>"
@@ -4542,7 +4558,8 @@ class Handler(BaseHTTPRequestHandler):
                 "<a href='/village'>Village list</a> | "
                 "<a href='/browse'>Trade Board</a> | "
                 "<a href='/me'>My Collection</a></p>"
-                + signin_note + plots + "</div></body></html>")
+                + signin_note + trees + plots
+                + "</div></body></html>")
         self.send_html(html)
 
     def do_shelf_add(self, con, user):
