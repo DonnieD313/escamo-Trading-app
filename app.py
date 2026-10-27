@@ -246,6 +246,15 @@ TRIBE_DISPLAY = {
 def tribe_display(tribe):
     return TRIBE_DISPLAY.get(tribe, tribe)
 
+# Display-shelf styles: key → (label, theme CSS class). A shelf is
+# display only — babies stay in the owner's collection.
+SHELF_STYLES = {
+    "wood": ("Wood", "theme-woods"),
+    "water": ("Water", "theme-water"),
+    "sky": ("Sky", "theme-sky"),
+    "underground": ("Underground", "theme-underground"),
+}
+
 # Display-only prices. Real-money purchases stay pending a payment
 # provider choice — nothing here charges anyone.
 PRICE_LEADER = "10.00"
@@ -782,6 +791,22 @@ def init_db():
         status TEXT NOT NULL DEFAULT 'pending',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
+    # Migration for display shelves: a shelf is display only — babies
+    # stay in the owner's collection, and a shelf row just records
+    # which baby sits where. The style lives on the user row.
+    con.execute("""
+    CREATE TABLE IF NOT EXISTS shelf_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        baby_id INTEGER NOT NULL REFERENCES babies(id),
+        position INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )""")
+    user_cols = [r[1] for r in
+                 con.execute("PRAGMA table_info(users)").fetchall()]
+    if "shelf_style" not in user_cols:
+        con.execute("ALTER TABLE users ADD COLUMN shelf_style "
+                    "TEXT DEFAULT 'wood'")
     # Migration for the tribe renames: rewrite old tribe names in the
     # Notices board so no user-facing page still shows them.
     for old, new in (("Blacks", "Shadows"),
@@ -1324,6 +1349,7 @@ def page(title, body, user=None):
                "<a href='/offers'>Offers</a> | "
                "<a href='/gifts'>Gifts</a> | "
                "<a href='/points_market'>Points Market</a> | "
+               "<a href='/shelf'>My Shelf</a> | "
                "<a href='/shop'>Shop</a> | "
                "<a href='/purchases'>Purchases</a> | "
                "<a href='/world'>World</a> | "
@@ -2021,6 +2047,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.gifts(con, user, query)
             elif path == "/points_market":
                 self.points_market(con, user)
+            elif path == "/shelf":
+                self.shelf_page(con, user)
+            elif path.startswith("/shelf/"):
+                self.shelf_public(con, user, path[7:])
             elif path == "/world":
                 self.world(con, user)
             elif path == "/notices":
@@ -2106,6 +2136,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.do_points_buy(con, user)
             elif path == "/points_cancel":
                 self.do_points_cancel(con, user)
+            elif path == "/shelf_add":
+                self.do_shelf_add(con, user)
+            elif path == "/shelf_remove":
+                self.do_shelf_remove(con, user)
+            elif path == "/shelf_move":
+                self.do_shelf_move(con, user)
+            elif path == "/shelf_style":
+                self.do_shelf_style(con, user)
             elif path == "/claim_gift":
                 self.do_claim_gift(con, user)
             elif path == "/choice_baby":
@@ -2723,7 +2761,9 @@ class Handler(BaseHTTPRequestHandler):
                             g["id"]))
         body += ("<p><a href='/gifts'>Send or manage points gifts</a> — "
                  "points move between players by gift or by a "
-                 "points-market sale.</p>")
+                 "points-market sale.</p>"
+                 "<p><a href='/shelf'>My Shelf</a> — arrange your "
+                 "babies on display.</p>")
         if query.get("msg"):
             body += "<p class='ok'>%s</p>" % esc(query["msg"][0])
         owned = user_owned_tribes(con, user["id"])
@@ -3200,6 +3240,12 @@ class Handler(BaseHTTPRequestHandler):
             (receiver["id"],))
         con.execute("UPDATE offers SET status='accepted' WHERE id=?",
                     (o["id"],))
+        # traded babies leave their old owners' shelves too (a shelf
+        # is display only — it never holds a baby you no longer own)
+        ids = [wanted["id"]] + ([offered["id"]] if offered else [])
+        q = ",".join("?" * len(ids))
+        con.execute("DELETE FROM shelf_items WHERE baby_id IN (%s)" % q,
+                    ids)
         # withdraw other pending offers touching the traded babies
         ids = [wanted["id"]] + ([offered["id"]] if offered else [])
         q = ",".join("?" * len(ids))
@@ -4062,6 +4108,8 @@ class Handler(BaseHTTPRequestHandler):
                     (lst["points"], lst["seller_id"]))
         con.execute("UPDATE babies SET owner_id=?, for_trade=0 "
                     "WHERE id=?", (user["id"], baby["id"]))
+        con.execute("DELETE FROM shelf_items WHERE baby_id=?",
+                    (baby["id"],))
         con.execute("UPDATE points_listings SET status='sold' "
                     "WHERE id=?", (lst["id"],))
         con.commit()
@@ -4082,6 +4130,161 @@ class Handler(BaseHTTPRequestHandler):
                         "WHERE id=?", (lst["id"],))
             con.commit()
         self.redirect("/points_market")
+
+    # -- display shelves: arrange owned babies on show --
+    def shelf_rows(self, con, user_id):
+        return con.execute(
+            "SELECT shelf_items.id AS shelf_id, shelf_items.position, "
+            "babies.* FROM shelf_items "
+            "JOIN babies ON babies.id = shelf_items.baby_id "
+            "WHERE shelf_items.user_id=? ORDER BY position, shelf_id",
+            (user_id,)).fetchall()
+
+    def shelf_body(self, con, owner, editable):
+        style = owner["shelf_style"] or "wood"
+        label, cls = SHELF_STYLES.get(style, SHELF_STYLES["wood"])
+        rows = self.shelf_rows(con, owner["id"])
+        body = ("<h2>%s's shelf — %s style</h2>"
+                % (esc(owner["username"]), label))
+        if not rows:
+            body += "<p>This shelf is empty so far.</p>"
+        for r in rows:
+            body += ("<div class='card %s'>%s</div>"
+                     % (cls, baby_card(r)))
+            if editable:
+                body += ("<form method='post' action='/shelf_move' "
+                         "style='display:inline'>"
+                         "<input type='hidden' name='shelf_id' "
+                         "value='%d'><input type='hidden' name='dir' "
+                         "value='up'><button>Move up</button></form> "
+                         "<form method='post' action='/shelf_move' "
+                         "style='display:inline'>"
+                         "<input type='hidden' name='shelf_id' "
+                         "value='%d'><input type='hidden' name='dir' "
+                         "value='down'><button>Move down</button>"
+                         "</form> "
+                         "<form method='post' action='/shelf_remove' "
+                         "style='display:inline'>"
+                         "<input type='hidden' name='shelf_id' "
+                         "value='%d'><button>Take off "
+                         "shelf</button></form>" % (r["shelf_id"],
+                                                    r["shelf_id"],
+                                                    r["shelf_id"]))
+        return body
+
+    def shelf_page(self, con, user):
+        """Manage your own shelf: pick a style, add owned babies,
+        reorder, or take babies off. Display only — babies stay in
+        your collection."""
+        if self.need_login(user):
+            return
+        owner = con.execute("SELECT * FROM users WHERE id=?",
+                            (user["id"],)).fetchone()
+        body = ("<p>Your shelf is display only — babies stay in your "
+                "collection, and a baby you trade or sell leaves the "
+                "shelf on its own.</p>")
+        body += "<h2>Shelf style</h2><form method='post' action='/shelf_style'>"
+        for key, (label, _cls) in SHELF_STYLES.items():
+            checked = "checked" if (owner["shelf_style"] or "wood") == key \
+                else ""
+            body += ("<label><input type='radio' name='style' value='%s' "
+                     "%s> %s</label><br>" % (key, checked, label))
+        body += "<button>Save style</button></form>"
+        body += self.shelf_body(con, owner, True)
+        owned = con.execute("SELECT * FROM babies WHERE owner_id=? "
+                            "ORDER BY id", (user["id"],)).fetchall()
+        shelved = {r["id"] for r in self.shelf_rows(con, user["id"])}
+        unshelved = [b for b in owned if b["id"] not in shelved]
+        if unshelved:
+            body += ("<h2>Add a baby to your shelf</h2>"
+                     "<form method='post' action='/shelf_add'>"
+                     "<select name='baby_id'>%s</select> "
+                     "<button>Put on shelf</button></form>" % "".join(
+                         "<option value='%d'>%s (%s)</option>"
+                         % (b["id"], esc(b["name"]), esc(b["cert"]))
+                         for b in unshelved))
+        self.send_html(page("My Shelf", body, user))
+
+    def shelf_public(self, con, user, username):
+        """Anyone can view a player's shelf — no login needed."""
+        owner = con.execute("SELECT * FROM users WHERE username=?",
+                            (username,)).fetchone()
+        if not owner:
+            self.send_html(page("Shelf",
+                                 "<p class='err'>No player by that "
+                                 "name.</p>", user), 404)
+            return
+        self.send_html(page("%s's Shelf" % esc(username),
+                             self.shelf_body(con, owner, False), user))
+
+    def do_shelf_add(self, con, user):
+        if self.need_login(user):
+            return
+        f = self.form()
+        b = con.execute("SELECT * FROM babies WHERE id=? AND owner_id=?",
+                        (f.get("baby_id"), user["id"])).fetchone()
+        if b:
+            existing = con.execute(
+                "SELECT 1 FROM shelf_items WHERE user_id=? AND "
+                "baby_id=?", (user["id"], b["id"])).fetchone()
+            if not existing:
+                pos = con.execute(
+                    "SELECT COALESCE(MAX(position), -1) + 1 FROM "
+                    "shelf_items WHERE user_id=?",
+                    (user["id"],)).fetchone()[0]
+                con.execute("INSERT INTO shelf_items (user_id, baby_id, "
+                            "position) VALUES (?,?,?)",
+                            (user["id"], b["id"], pos))
+                con.commit()
+        self.redirect("/shelf")
+
+    def do_shelf_remove(self, con, user):
+        if self.need_login(user):
+            return
+        f = self.form()
+        con.execute("DELETE FROM shelf_items WHERE id=? AND user_id=?",
+                    (f.get("shelf_id"), user["id"]))
+        con.commit()
+        self.redirect("/shelf")
+
+    def do_shelf_move(self, con, user):
+        """Swap a shelf row with its neighbour up or down."""
+        if self.need_login(user):
+            return
+        f = self.form()
+        row = con.execute("SELECT * FROM shelf_items WHERE id=? AND "
+                          "user_id=?",
+                          (f.get("shelf_id"), user["id"])).fetchone()
+        if row:
+            if f.get("dir") == "up":
+                other = con.execute(
+                    "SELECT * FROM shelf_items WHERE user_id=? AND "
+                    "position < ? ORDER BY position DESC LIMIT 1",
+                    (user["id"], row["position"])).fetchone()
+            else:
+                other = con.execute(
+                    "SELECT * FROM shelf_items WHERE user_id=? AND "
+                    "position > ? ORDER BY position ASC LIMIT 1",
+                    (user["id"], row["position"])).fetchone()
+            if other:
+                con.execute("UPDATE shelf_items SET position=? "
+                            "WHERE id=?", (other["position"], row["id"]))
+                con.execute("UPDATE shelf_items SET position=? "
+                            "WHERE id=?", (row["position"], other["id"]))
+                con.commit()
+        self.redirect("/shelf")
+
+    def do_shelf_style(self, con, user):
+        if self.need_login(user):
+            return
+        f = self.form()
+        style = f.get("style") or "wood"
+        if style not in SHELF_STYLES:
+            style = "wood"
+        con.execute("UPDATE users SET shelf_style=? WHERE id=?",
+                    (style, user["id"]))
+        con.commit()
+        self.redirect("/shelf")
 
     def do_claim_gift(self, con, user):
         """Claim the monthly gift: one free baby per user per calendar

@@ -2896,6 +2896,56 @@ def main():
             check("cancelling a listing keeps the baby with the seller",
                   own2["status"] == "cancelled"
                   and keep["owner_id"] == ms_row["id"])
+            # (h) Display shelves: add, style, reorder, public
+            # view, remove, and a traded baby leaves the shelf.
+            sh = http.cookiejar.CookieJar()
+            sh2 = http.cookiejar.CookieJar()
+            s, _ = signup_full(sh, "shelfy", "secret9",
+                               tribe="Blues", roster="Marina", base=pbase)
+            s, _ = signup_full(sh2, "shelfy2", "secret9",
+                               tribe="Browns", roster="Willow",
+                               base=pbase)
+            pcongs = sqlite3.connect(pdb)
+            pcongs.row_factory = sqlite3.Row
+            sh_row = pcongs.execute(
+                "SELECT * FROM users WHERE username='shelfy'").fetchone()
+            sh_baby = pcongs.execute(
+                "SELECT * FROM babies WHERE owner_id=?",
+                (sh_row["id"],)).fetchone()
+            s, shelf_html = get(sh, "/shelf", base=pbase)
+            check("shelf page loads with a style picker",
+                  "Shelf style" in shelf_html and "My Shelf" in shelf_html)
+            s, _ = post(sh, "/shelf_add",
+                        {"baby_id": sh_baby["id"]}, base=pbase)
+            s, shelf2 = get(sh, "/shelf", base=pbase)
+            check("added baby shows on own shelf",
+                  sh_baby["name"] in shelf2)
+            s, pub = get(sh2, "/shelf/shelfy", base=pbase)
+            check("shelf is publicly viewable by username",
+                  sh_baby["name"] in pub and "Take off shelf" not in pub)
+            s, _ = post(sh, "/shelf_style",
+                        {"style": "sky"}, base=pbase)
+            s, shelf3 = get(sh, "/shelf", base=pbase)
+            check("sky shelf style applies",
+                  "Sky style" in shelf3 and "theme-sky" in shelf3)
+            s, _ = post(sh2, "/shelf_add",
+                        {"baby_id": sh_baby["id"]}, base=pbase)
+            check("another player cannot shelve your baby",
+                  pcongs.execute(
+                      "SELECT COUNT(*) FROM shelf_items WHERE "
+                      "baby_id=?", (sh_baby["id"],)).fetchone()[0] == 1)
+            s, _ = post(sh, "/shelf_remove",
+                        {"shelf_id": pcongs.execute(
+                            "SELECT id FROM shelf_items WHERE "
+                            "baby_id=?", (sh_baby["id"],)).fetchone()[0]},
+                        base=pbase)
+            s, shelf4 = get(sh, "/shelf", base=pbase)
+            check("removed baby leaves the shelf",
+                  "Take off shelf" not in shelf4
+                  and pcongs.execute(
+                      "SELECT COUNT(*) FROM shelf_items WHERE "
+                      "baby_id=?", (sh_baby["id"],)).fetchone()[0] == 0)
+            pcongs.close()
             pcong4.close()
             pcong5.close()
             pcong6.close()
