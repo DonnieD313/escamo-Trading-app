@@ -3126,8 +3126,9 @@ def main():
                   and "knocked out" in state2)
             pdb2.close()
             # (o) Tribe villages, touch-to-move, trading room.
-            check("live page has touch controls, waddle and villages",
-                  "touchstart" in live and "waddle" in live
+            check("live page has touch controls, walking legs and "
+                  "villages",
+                  "touchstart" in live and "leg leg-l" in live
                   and "Fortress Rooted village" in live
                   and "zonelabel" in live)
             vjar = http.cookiejar.CookieJar()
@@ -3177,6 +3178,39 @@ def main():
             s, liveb = get(anon, "/live", base=pbase)
             check("live world carries the popup banner slot",
                   "popup-banner" in liveb)
+            # (q) Cartoon walkers, practice dummy battles.
+            check("live page builds cartoon walking babies",
+                  "walkerSVG" in liveb and "leg leg-l" in liveb)
+            s, dstate = get(anon, "/play_state", base=pbase)
+            dplayers = {p["username"]: p
+                        for p in json.loads(dstate)["players"]}
+            check("state carries tribes and a practice dummy",
+                  dplayers["villager"]["tribe"] == "Browns"
+                  and "Practice Dummy" in dplayers
+                  and dplayers["Practice Dummy"]["dummy"] is True)
+            post(sh, "/play_move", {"x": "50", "y": "45"}, base=pbase)
+            pdb5 = sqlite3.connect(pdb)
+            pdb5.execute("UPDATE play_health SET last_hit_at="
+                         "'2000-01-01 00:00:00' WHERE user_id IN "
+                         "(SELECT id FROM users WHERE username="
+                         "'shelfy')")
+            pdb5.commit()
+            s, dhit = post(sh, "/play_hit", {"target": "__dummy__"},
+                           base=pbase)
+            check("practice dummy takes 10 damage",
+                  s == 200 and '"hp": 90' in dhit)
+            for _ in range(9):
+                pdb5.execute("UPDATE play_health SET last_hit_at="
+                             "'2000-01-01 00:00:00' WHERE user_id IN "
+                             "(SELECT id FROM users WHERE username="
+                             "'shelfy')")
+                pdb5.commit()
+                post(sh, "/play_hit", {"target": "__dummy__"},
+                     base=pbase)
+            s, dstate2 = get(sh2, "/play_state", base=pbase)
+            check("dummy knockout respawns and is announced",
+                  "practice dummy" in dstate2)
+            pdb5.close()
             pcongs.close()
             pcong4.close()
             pcong5.close()

@@ -871,6 +871,15 @@ def init_db():
         last_damage_at TEXT,
         last_hit_at TEXT
     )""")
+    # Practice dummy: one punchable dummy in the field so players
+    # can battle even when nobody else is online.
+    con.execute("""
+    CREATE TABLE IF NOT EXISTS play_dummy (
+        id INTEGER PRIMARY KEY,
+        hp INTEGER NOT NULL DEFAULT 100
+    )""")
+    con.execute("INSERT OR IGNORE INTO play_dummy (id, hp) VALUES "
+                "(1, 100)")
     # Migration for the tribe renames: rewrite old tribe names in the
     # Notices board so no user-facing page still shows them.
     for old, new in (("Blacks", "Shadows"),
@@ -4711,8 +4720,15 @@ class Handler(BaseHTTPRequestHandler):
                     bubble = msg["text"]
             out.append({"username": p["username"], "x": x, "y": y,
                         "avatar": baby_img_html(baby, 64) if baby else "",
+                        "tribe": user_tribe(con, p),
                         "online": online(p), "bubble": bubble, "hp": hp,
                         "you": bool(user and user["id"] == p["id"])})
+        drow = con.execute("SELECT hp FROM play_dummy WHERE id=1"
+                           ).fetchone()
+        out.append({"username": "Practice Dummy", "x": 50, "y": 45,
+                    "avatar": "", "tribe": "Dummy", "online": True,
+                    "bubble": "", "hp": drow["hp"] if drow else 100,
+                    "you": False, "dummy": True})
         return out
 
     def play_state(self, con, user):
@@ -4736,6 +4752,46 @@ class Handler(BaseHTTPRequestHandler):
         if not user:
             self.send_json({"ok": False, "error": "login required"},
                            403)
+            return
+        if self.form().get("target") == "__dummy__":
+            now = datetime.datetime.utcnow()
+            mine = con.execute("SELECT * FROM play_health WHERE "
+                               "user_id=?", (user["id"],)).fetchone()
+            if mine and mine["last_hit_at"]:
+                try:
+                    last = datetime.datetime.strptime(
+                        mine["last_hit_at"], "%Y-%m-%d %H:%M:%S")
+                    if (now - last) < datetime.timedelta(seconds=2):
+                        self.send_json({"ok": False,
+                                        "error": "too_fast"}, 400)
+                        return
+                except (ValueError, TypeError):
+                    pass
+            prow = con.execute("SELECT * FROM player_positions WHERE "
+                               "user_id=?", (user["id"],)).fetchone()
+            ax, ay = (prow["x"], prow["y"]) if prow else self._spawn(
+                user["id"], user_tribe(con, user))
+            if abs(ax - 50) > 15 or abs(ay - 45) > 15:
+                self.send_json({"ok": False, "error": "too_far"}, 400)
+                return
+            drow = con.execute("SELECT hp FROM play_dummy WHERE id=1"
+                               ).fetchone()
+            hp = (drow["hp"] if drow else 100) - 10
+            ko = hp <= 0
+            if ko:
+                hp = 100
+                con.execute("INSERT INTO play_chat (user_id, text) "
+                            "VALUES (?, ?)", (user["id"],
+                                "💥 %s knocked out the practice dummy!"
+                                % user["username"]))
+            con.execute("UPDATE play_dummy SET hp=? WHERE id=1",
+                        (hp,))
+            con.execute("INSERT INTO play_health (user_id, last_hit_at)"
+                        " VALUES (?, CURRENT_TIMESTAMP) ON CONFLICT"
+                        "(user_id) DO UPDATE SET last_hit_at="
+                        "CURRENT_TIMESTAMP", (user["id"],))
+            con.commit()
+            self.send_json({"ok": True, "hp": hp, "ko": ko})
             return
         target = con.execute("SELECT * FROM users WHERE username=?",
                              (self.form().get("target") or "",)
@@ -4856,8 +4912,8 @@ class Handler(BaseHTTPRequestHandler):
         controls = ""
         if user:
             controls = (
-                "<div style='background:#fff;padding:8px;"
-                "box-sizing:border-box;border-top:1px solid #ccc'>"
+                "<div style='background:#ffe9a8;padding:8px;"
+                "box-sizing:border-box;border-top:4px solid #e67e22'>"
                 "<div id='fightmsg' style='font-size:14px;"
                 "min-height:18px;text-align:center'></div>"
                 "<div style='text-align:center'>"
@@ -4874,8 +4930,8 @@ class Handler(BaseHTTPRequestHandler):
                 "<button>Send</button></form></div>")
         else:
             controls = (
-                "<div style='background:#fff;padding:10px;"
-                "border-top:1px solid #ccc;"
+                "<div style='background:#ffe9a8;padding:10px;"
+                "border-top:4px solid #e67e22;"
                 "text-align:center'><a href='/login'>Log in</a> or "
                 "<a href='/signup'>sign up</a> to walk around and "
                 "chat — you can watch everyone else meanwhile.</div>")
@@ -4886,26 +4942,48 @@ class Handler(BaseHTTPRequestHandler):
             for lx, ty, tree in
             [(4, 15, "🌳"), (88, 12, "🌲"), (12, 70, "🌲"),
              (82, 65, "🌳"), (48, 18, "🌳")])
+        clouds = "".join(
+            "<span style='position:absolute;left:%d%%;top:%d%%;'"
+            "font-size:40px' aria-hidden='true'>☁️</span>"
+            % (lx, ty)
+            for lx, ty in [(8, 4), (62, 7), (38, 2)])
         html = ("<!DOCTYPE html><html><head><meta charset='utf-8'>"
                 "<meta name='viewport' content='width=device-width,"
                 "initial-scale=1'>"
                 "<title>Live World — Hoodie Babies</title>"
                 "<style>html,body{margin:0;padding:0;font-family:"
-                "system-ui,sans-serif} body{display:flex;"
+                "'Comic Sans MS','Chalkboard SE','Comic Neue',cursive} body{display:flex;"
                 "flex-direction:column;height:100vh;height:100dvh;"
                 "overflow:hidden} button{padding:10px 14px;"
                 "font-size:18px} a{color:#14532d} "
-                "@keyframes waddle{from{transform:translate(-50%,"
-                "-50%) rotate(-4deg)}to{transform:translate(-50%,"
-                "-50%) rotate(4deg) translateY(-4px)}} "
-                ".walking{animation:waddle .35s ease-in-out infinite "
-                "alternate}</style>"
+                "@keyframes step{from{transform:rotate(-24deg)}"
+                "to{transform:rotate(24deg)}} "
+                ".walking .leg{transform-box:fill-box;"
+                "transform-origin:50% 0} "
+                ".walking .leg-l{animation:step .35s ease-in-out "
+                "infinite alternate} "
+                ".walking .leg-r{animation:step .35s ease-in-out "
+                "infinite alternate-reverse} "
+                "@keyframes bob{from{transform:translate(-50%,-50%)}"
+                "to{transform:translate(-50%,-54%)}} "
+                ".idle{animation:bob 1.6s ease-in-out infinite "
+                "alternate} "
+                "@keyframes shake{0%,100%{transform:translate(-50%,"
+                "-50%)}25%{transform:translate(-56%,-50%)}75%{"
+                "transform:translate(-44%,-50%)}} "
+                ".shaking{animation:shake .4s} "
+                "@keyframes lunge{0%,100%{transform:translate(-50%,"
+                "-50%)}50%{transform:translate(-50%,-50%) "
+                "scale(1.18)}} "
+                ".lunging{animation:lunge .4s} "
+                "button{border:3px solid #333;border-radius:14px;"
+                "background:#fff;box-shadow:2px 2px 0 #333}</style>"
                 "</head><body>"
                 "<div id='popup-banner'></div>"
                 "<div style='padding:6px 10px;display:flex;"
                 "flex-wrap:wrap;gap:8px;align-items:center;"
-                "justify-content:space-between;background:#fff;"
-                "border-bottom:1px solid #ccc'><b>🌍 Live World</b>"
+                "justify-content:space-between;background:#ffcf3f;"
+                "border-bottom:4px solid #e67e22'><b>🌍 Live World</b>"
                 "<span id='zonelabel' style='font-size:13px'></span>"
                 "<span style='font-size:13px'>"
                 "<a href='/play'>Play scene</a> | "
@@ -4931,7 +5009,7 @@ class Handler(BaseHTTPRequestHandler):
                 "<div style='position:absolute;left:8px;top:69%;"
                 "font-size:13px;background:rgba(255,255,255,0.7);"
                 "border-radius:8px;padding:1px 6px'>🌲 Fortress "
-                "Rooted village</div>" + trees +
+                "Rooted village</div>" + clouds + trees +
                 "<div id='players'></div></div>"
                 "<div id='chatlog' style='max-height:64px;"
                 "overflow:auto;padding:6px 10px;font-size:13px;"
@@ -4941,7 +5019,8 @@ class Handler(BaseHTTPRequestHandler):
                 "var ME=" + json.dumps(me) + ";var POS=null;"
                 "function esc(s){return s.replace(/&/g,'&amp;')"
                 ".replace(/</g,'&lt;');}"
-                "function render(st){window._ST=st;var h='';"
+                                "function walkerSVG(tribe){var c={Blues:['#2b5ea7','#ffd9b3'],Browns:['#7a4a21','#ffd9b3'],Reds:['#c0392b','#ffd9b3'],Dummy:['#888','#e0e0e0']}[tribe]||['#2b5ea7','#ffd9b3'];var hood=c[0],skin=c[1];return '<svg width=\"72\" height=\"86\" viewBox=\"0 0 100 120\">'+'<rect class=\"leg leg-l\" x=\"36\" y=\"88\" width=\"11\" height=\"24\" rx=\"5\" fill=\"#333\"/>'+'<rect class=\"leg leg-r\" x=\"53\" y=\"88\" width=\"11\" height=\"24\" rx=\"5\" fill=\"#333\"/>'+'<rect x=\"26\" y=\"48\" width=\"48\" height=\"46\" rx=\"14\" fill=\"'+hood+'\"/>'+'<circle cx=\"40\" cy=\"66\" r=\"3\" fill=\"white\"/><circle cx=\"50\" cy=\"70\" r=\"3\" fill=\"white\"/><circle cx=\"60\" cy=\"66\" r=\"3\" fill=\"white\"/>'+'<rect x=\"18\" y=\"54\" width=\"10\" height=\"26\" rx=\"5\" fill=\"'+hood+'\"/>'+'<rect x=\"72\" y=\"54\" width=\"10\" height=\"26\" rx=\"5\" fill=\"'+hood+'\"/>'+'<circle cx=\"50\" cy=\"30\" r=\"26\" fill=\"'+hood+'\"/>'+'<circle cx=\"50\" cy=\"32\" r=\"19\" fill=\"'+skin+'\"/>'+'<circle cx=\"43\" cy=\"30\" r=\"3\" fill=\"#222\"/><circle cx=\"57\" cy=\"30\" r=\"3\" fill=\"#222\"/>'+'<path d=\"M43 40 Q50 46 57 40\" stroke=\"#222\" fill=\"none\" stroke-width=\"2\"/></svg>';}"
+"function render(st){window._ST=st;var h='';"
                 "st.players.forEach(function(p,i){"
                 "if(p.you&&!POS){POS={x:p.x,y:p.y};}"
                 "if(p.you){var zl=document.getElementById('zonelabel');"
@@ -4957,11 +5036,11 @@ class Handler(BaseHTTPRequestHandler):
                 "var bub=p.bubble?\"<div style='background:white;"
                 "border-radius:10px;padding:4px 8px;font-size:13px;"
                 "max-width:160px'>\"+esc(p.bubble)+\"</div>\":'';"
-                "h+=\"<div class='\"+(moved?\"walking\":\"\")+\"' "
+                "h+=\"<div class='\"+((moved?\"walking\":\"idle\")+(p.username===window._SHAKE?\" shaking\":\"\")+(p.username===window._LUNGE?\" lunging\":\"\"))+\"' "
                 "style='position:absolute;transition:left .6s linear,"
                 "top .6s linear;left:\"+p.x+\"%;"
                 "top:\"+p.y+\"%;transform:translate(-50%,-50%);"
-                "text-align:center'>\"+bub+\"<div>\"+p.avatar+\"</div>"
+                "text-align:center'>\"+(p.username===window._BURST?\"<div style='font-size:28px'>💥</div>\":'')+bub+\"<div>\"+walkerSVG(p.tribe)+\"</div>"
                 "<div style='background:rgba(255,255,255,0.85);"
                 "border-radius:8px;padding:1px 6px;font-size:13px'>"
                 "\"+dot+\"<a href='/shelf/\"+encodeURIComponent("
@@ -4974,6 +5053,7 @@ class Handler(BaseHTTPRequestHandler):
                 "\"+(ME&&!p.you?\"<button onclick='hitIdx(\"+i+\")' "
                 "style='padding:4px 8px;font-size:14px'>🥊 Fight"
                 "</button>\":'')+\"</div>\";});"
+                "window._SHAKE=null;window._LUNGE=null;window._BURST=null;"
                 "document.getElementById('players').innerHTML=h;"
                 "document.getElementById('chatlog').innerHTML="
                 "st.messages.map(function(m){return '<b>'+esc("
@@ -4989,7 +5069,7 @@ class Handler(BaseHTTPRequestHandler):
                 "function hitIdx(i){var p=window._ST.players[i];"
                 "if(!p){return;}"
                 "var f=new URLSearchParams();f.append('csrf_token',"
-                "CSRF);f.append('target',p.username);"
+                "CSRF);f.append('target',p.dummy?'__dummy__':p.username);"
                 "fetch('/play_hit',{method:'POST',body:f}).then("
                 "function(r){return r.json();}).then(function(d){"
                 "var m=document.getElementById('fightmsg');"
@@ -5000,7 +5080,7 @@ class Handler(BaseHTTPRequestHandler):
                 ":'Could not fight.';}"
                 "else{m.textContent=d.ko?('You knocked out '+"
                 "p.username+'!'):('You hit '+p.username+' — '+d.hp+"
-                "' health left.');}poll();});}"
+                "' health left.');window._SHAKE=p.username;window._LUNGE=ME;window._BURST=p.username;}poll();});}"
                 "document.addEventListener('keydown',function(e){"
                 "if(document.activeElement&&document.activeElement"
                 ".id==='chatin'){return;}"
@@ -5058,7 +5138,9 @@ class Handler(BaseHTTPRequestHandler):
         if user:
             mine = con.execute("SELECT * FROM babies WHERE owner_id=?",
                                (user["id"],)).fetchall()
-        body = ("<p>Everyone who has babies up for trade right now, "
+        body = ("<div style='font-family:\"Comic Sans MS\","
+                "\"Chalkboard SE\",\"Comic Neue\",cursive'>"
+                "<p>Everyone who has babies up for trade right now, "
                 "lined up on the shelf. Scroll the shelf, tap a baby, "
                 "and make your offer below.</p>"
                 "<p>← Scroll the shelf →</p>")
@@ -5111,6 +5193,7 @@ class Handler(BaseHTTPRequestHandler):
                 name='offered_points' value='0' min='0'><br>
                 <button>Send offer</button></form>"""
                          % (wanted["id"], opts))
+        body += "</div>"
         self.send_html(page("Trading Room", body, user))
 
     def popup_banner(self, con, user):
