@@ -3149,11 +3149,34 @@ def main():
             post(sh, "/toggle_trade", {"baby_id": str(brow[0])},
                  base=pbase)
             s, room = get(sh2, "/trading", base=pbase)
-            check("trading room shows who is trading and their baby",
+            check("trading room shelf shows who is trading",
                   "shelfy is trading" in room and brow[1] in room
-                  and "Send offer" in room)
+                  and "overflow-x:auto" in room)
+            s, panel = get(sh2, "/trading?want=%d" % brow[0],
+                           base=pbase)
+            check("tapping a shelf baby opens its offer panel",
+                  "Send offer" in panel and brow[1] in panel)
             post(sh, "/toggle_trade", {"baby_id": str(brow[0])},
                  base=pbase)
+            # (p) Pop-up arrival banner.
+            pdb4 = sqlite3.connect(pdb)
+            pdb4.execute("INSERT INTO popup_items (cert, name, tribe, "
+                         "hoodie_pattern, stones, face, price, stock, "
+                         "sold) VALUES ('EHB-P999', 'Test Pop', "
+                         "'Blues', 'Wave', 'yellow', 'fish-like', "
+                         "'1.99', 1, 0)")
+            pdb4.commit()
+            pdb4.close()
+            s, banner = get(anon, "/popup_banner", base=pbase)
+            check("popup banner endpoint names the new arrival",
+                  '"active": true' in banner
+                  and "Test Pop" in banner)
+            s, homeb = get(anon, "/", base=pbase)
+            check("pages carry the popup banner slot",
+                  "popup-banner" in homeb)
+            s, liveb = get(anon, "/live", base=pbase)
+            check("live world carries the popup banner slot",
+                  "popup-banner" in liveb)
             pcongs.close()
             pcong4.close()
             pcong5.close()

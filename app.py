@@ -1450,7 +1450,23 @@ def page(title, body, user=None):
             ".theme-woods{background:#eff5e6;border-color:#8fae6b}"
             ".theme-sky{background:#eaf2ff;border-color:#9db8e8}"
             ".theme-underground{background:#f1eff5;border-color:#6b5b7a}"
-            "</style></head><body>%s<h1>%s</h1>%s"
+            "</style></head><body><div id='popup-banner'></div>"
+            "<script>fetch('/popup_banner').then(function(r){return "
+            "r.json();}).then(function(d){if(!d.active){return;}"
+            "if(localStorage.getItem('popup_seen')===d.cert){return;}"
+            "var b=document.getElementById('popup-banner');"
+            "var bar=document.createElement('div');"
+            "bar.style.cssText='background:#f5c542;padding:10px;"
+            "text-align:center;font-weight:bold';"
+            "bar.textContent='🎉 A pop-up has arrived: '+d.name+'! ';"
+            "var a=document.createElement('a');a.href='/shop';"
+            "a.textContent='See it in the Shop';bar.appendChild(a);"
+            "var x=document.createElement('button');x.textContent=' × ';"
+            "x.onclick=function(){localStorage.setItem('popup_seen',"
+            "d.cert);b.innerHTML='';};"
+            "bar.appendChild(document.createTextNode(' '));"
+            "bar.appendChild(x);b.appendChild(bar);});</script>"
+            "%s<h1>%s</h1>%s"
             "<footer style='margin-top:24px;padding-top:12px;"
             "border-top:1px solid #ccc;font-size:13px;color:#444'>"
             "Note: the original Hoodie Babies figure will not be released "
@@ -2158,7 +2174,9 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/live":
                 self.live_page(con, user)
             elif path == "/trading":
-                self.trading_room(con, user)
+                self.trading_room(con, user, query)
+            elif path == "/popup_banner":
+                self.popup_banner(con, user)
             elif path == "/play_state":
                 self.play_state(con, user)
             elif path == "/shelf":
@@ -4883,6 +4901,7 @@ class Handler(BaseHTTPRequestHandler):
                 ".walking{animation:waddle .35s ease-in-out infinite "
                 "alternate}</style>"
                 "</head><body>"
+                "<div id='popup-banner'></div>"
                 "<div style='padding:6px 10px;display:flex;"
                 "flex-wrap:wrap;gap:8px;align-items:center;"
                 "justify-content:space-between;background:#fff;"
@@ -5022,14 +5041,14 @@ class Handler(BaseHTTPRequestHandler):
                 "f.append('csrf_token',CSRF);f.append('text',inp.value);"
                 "fetch('/play_chat',{method:'POST',body:f}).then("
                 "function(){inp.value='';poll();});});}"
-                "poll();setInterval(poll,2000);</script>"
+                "poll();setInterval(poll,2000);fetch('/popup_banner').then(function(r){return r.json();}).then(function(d){if(!d.active){return;}if(localStorage.getItem('popup_seen')===d.cert){return;}var b=document.getElementById('popup-banner');var bar=document.createElement('div');bar.style.cssText='background:#f5c542;padding:10px;text-align:center;font-weight:bold';bar.textContent='🎉 A pop-up has arrived: '+d.name+'! ';var a=document.createElement('a');a.href='/shop';a.textContent='See it in the Shop';bar.appendChild(a);var x=document.createElement('button');x.textContent=' × ';x.onclick=function(){localStorage.setItem('popup_seen',d.cert);b.innerHTML='';};bar.appendChild(document.createTextNode(' '));bar.appendChild(x);b.appendChild(bar);});</script>"
                 "</body></html>")
         self.send_html(html)
 
-    def trading_room(self, con, user):
-        """The trading room: everyone can see who is trading right
-        now and what they have up, and signed-in players can make
-        offers right here (same offer form as the Trade Board)."""
+    def trading_room(self, con, user, query):
+        """The trading room: trading babies lined up on a shelf you
+        scroll through, each labeled with who is trading it. Tap a
+        baby on the shelf and the offer panel below opens for it."""
         rows = con.execute(
             "SELECT babies.*, users.username AS owner FROM babies "
             "JOIN users ON users.id = babies.owner_id WHERE "
@@ -5039,18 +5058,43 @@ class Handler(BaseHTTPRequestHandler):
         if user:
             mine = con.execute("SELECT * FROM babies WHERE owner_id=?",
                                (user["id"],)).fetchall()
-        body = ("<p>Everyone who has babies up for trade right now. "
-                "Tap a baby to see it up close, or send an offer for "
-                "it here. You can also walk the Live World villages "
-                "and visit anyone's shelf.</p>")
+        body = ("<p>Everyone who has babies up for trade right now, "
+                "lined up on the shelf. Scroll the shelf, tap a baby, "
+                "and make your offer below.</p>"
+                "<p>← Scroll the shelf →</p>")
         if not rows:
             body += "<p>Nobody has babies up for trade right now.</p>"
-        current = None
-        for b in rows:
-            if b["owner"] != current:
-                current = b["owner"]
-                body += ("<h2>%s is trading</h2>" % esc(current))
-            body += baby_card(b, b["owner"], show_owner=True)
+        else:
+            shelf = ("<div style='display:flex;gap:14px;"
+                     "overflow-x:auto;padding:8px 8px 0;"
+                     "align-items:flex-end'>")
+            for b in rows:
+                shelf += ("<div style='flex:0 0 170px;text-align:center'>"
+                          "<a href='/trading?want=%d'>%s</a><br>"
+                          "<b>%s</b><br>%s is trading<br>"
+                          "<a href='/baby/%s'>View baby</a></div>"
+                          % (b["id"], baby_img_html(b, 120),
+                             esc(b["name"]), esc(b["owner"]),
+                             esc(b["cert"])))
+            shelf += ("</div><div style='height:14px;background:"
+                      "#8b5a2b;border-radius:6px;margin:0 4px 20px'>"
+                      "</div>")
+            body += shelf
+        want = (query.get("want") or [None])[0]
+        wanted = None
+        if want:
+            for b in rows:
+                if str(b["id"]) == str(want):
+                    wanted = b
+                    break
+        if wanted is None:
+            if want:
+                body += ("<p>That baby is no longer up for trade.</p>")
+            else:
+                body += ("<p>Tap a baby on the shelf to make an "
+                         "offer for it.</p>")
+        else:
+            body += baby_card(wanted, wanted["owner"], show_owner=True)
             if not user:
                 body += ("<p><a href='/login'>Log in</a> to make an "
                          "offer.</p>")
@@ -5066,8 +5110,19 @@ class Handler(BaseHTTPRequestHandler):
                 Points to offer: <input type='number'
                 name='offered_points' value='0' min='0'><br>
                 <button>Send offer</button></form>"""
-                         % (b["id"], opts))
+                         % (wanted["id"], opts))
         self.send_html(page("Trading Room", body, user))
+
+    def popup_banner(self, con, user):
+        """The newest pop-up still up for grabs, for the banner that
+        runs across the top of every page when one has arrived."""
+        row = con.execute("SELECT * FROM popup_items WHERE stock>0 "
+                          "ORDER BY id DESC LIMIT 1").fetchone()
+        if not row:
+            self.send_json({"active": False})
+            return
+        self.send_json({"active": True, "cert": row["cert"],
+                        "name": row["name"]})
 
     def do_shelf_add(self, con, user):
         if self.need_login(user):
