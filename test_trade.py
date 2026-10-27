@@ -3030,6 +3030,22 @@ def main():
             s, home = get(anon, "/", base=pbase)
             check("village link appears in the logged-out menu",
                   "/village" in home)
+            # (l) Play scene: babies standing, online dots.
+            s, _ = get(sh, "/me", base=pbase)
+            pcongs.execute(
+                "UPDATE users SET last_seen='2000-01-01 00:00:00' "
+                "WHERE username='shelfy2'")
+            pcongs.commit()
+            s, play = get(anon, "/play", base=pbase)
+            check("play scene shows babies standing in the village",
+                  "Hoodie Babies Village" in play
+                  and sh_baby["name"] in play
+                  and "/baby/" in play)
+            check("recent player shows Online, stale player Away",
+                  "shelfy's village" in play
+                  and "● Online" in play
+                  and "shelfy2's village" in play
+                  and "● Away" in play)
             pcongs.close()
             pcong4.close()
             pcong5.close()

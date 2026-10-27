@@ -839,6 +839,11 @@ def init_db():
         status TEXT NOT NULL DEFAULT 'pending',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
+    # Online presence for the Play scene: last_seen refreshes on
+    # every authenticated request; a player counts as online if seen
+    # within the last 5 minutes.
+    if "last_seen" not in user_cols:
+        con.execute("ALTER TABLE users ADD COLUMN last_seen TEXT")
     # Migration for the tribe renames: rewrite old tribe names in the
     # Notices board so no user-facing page still shows them.
     for old, new in (("Blacks", "Shadows"),
@@ -1386,6 +1391,7 @@ def page(title, body, user=None):
                "<a href='/purchases'>Purchases</a> | "
                "<a href='/world'>World</a> | "
                "<a href='/village'>Village</a> | "
+               "<a href='/play'>Play</a> | "
                "<a href='/notices'>Notices</a> | "
                "<a href='/logout'>Log out (%s)</a> | "
                "%s</nav>%s" % (esc(user["username"]), share_btn,
@@ -1396,6 +1402,7 @@ def page(title, body, user=None):
                "<a href='/shop'>Shop</a> | "
                "<a href='/world'>World</a> | "
                "<a href='/village'>Village</a> | "
+               "<a href='/play'>Play</a> | "
                "<a href='/notices'>Notices</a> | "
                "%s</nav>%s" % (share_btn, share_notice))
     return ("<!DOCTYPE html><html><head><meta charset='utf-8'>"
@@ -2057,8 +2064,15 @@ class Handler(BaseHTTPRequestHandler):
                             (token,))
                 con.commit()
                 return None
-        return con.execute("SELECT * FROM users WHERE id=?",
-                           (row["user_id"],)).fetchone()
+        found = con.execute("SELECT * FROM users WHERE id=?",
+                            (row["user_id"],)).fetchone()
+        if found:
+            # Every signed-in request marks the player as seen now,
+            # so the Play scene's online dots stay current.
+            con.execute("UPDATE users SET last_seen=CURRENT_TIMESTAMP "
+                        "WHERE id=?", (found["id"],))
+            con.commit()
+        return found
 
     def form(self):
         # Parsed once per POST request (do_POST parses first so it can
@@ -2099,6 +2113,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.points_market(con, user)
             elif path == "/village":
                 self.village_page(con, user)
+            elif path == "/play":
+                self.play_page(con, user)
             elif path == "/shelf":
                 self.shelf_page(con, user)
             elif path.startswith("/shelf/"):
@@ -4448,6 +4464,86 @@ class Handler(BaseHTTPRequestHandler):
             for b in babies:
                 body += baby_card(b)
         self.send_html(page("Village", body, user))
+
+    def play_page(self, con, user):
+        """Full-screen Play scene: babies standing in the village,
+        grouped by player, with an online dot on anyone active in
+        the last 5 minutes. No live socket — the page refreshes
+        itself every minute so the dots stay current. Public to
+        view; signing in puts you in the scene."""
+        def is_online(p):
+            raw = _bget(p, "last_seen")
+            if not raw:
+                return False
+            try:
+                seen = datetime.datetime.strptime(
+                    raw, "%Y-%m-%d %H:%M:%S")
+            except (ValueError, TypeError):
+                return False
+            return (datetime.datetime.utcnow() - seen) < \
+                datetime.timedelta(minutes=5)
+
+        players = con.execute(
+            "SELECT users.*, COUNT(babies.id) AS n FROM users LEFT JOIN "
+            "babies ON babies.owner_id = users.id WHERE users.username "
+            "!= 'underground' GROUP BY users.id HAVING n > 0 ORDER BY "
+            "users.username").fetchall()
+        plots = ""
+        for p in players:
+            babies = con.execute("SELECT * FROM babies WHERE owner_id=? "
+                                 "ORDER BY id", (p["id"],)).fetchall()
+            online = is_online(p)
+            dot = ("<span style='color:green'>● Online</span>" if online
+                   else "<span style='color:#888'>● Away</span>")
+            you = (" <b>(You)</b>" if user and user["id"] == p["id"]
+                   else "")
+            shown = babies[:12]
+            figs = "".join(
+                "<a href='/baby/%s' title='%s'>%s</a>"
+                % (esc(b["cert"]), esc(b["name"]), baby_img_html(b, 72))
+                for b in shown)
+            more = ""
+            if len(babies) > len(shown):
+                more = ("<p><a href='/village'>+%d more babies in %s's "
+                        "village</a></p>"
+                        % (len(babies) - len(shown), esc(p["username"])))
+            plots += ("<div style='display:inline-block;vertical-align:"
+                      "top;background:rgba(255,255,255,0.85);"
+                      "border:2px solid #8fae6b;border-radius:14px;"
+                      "padding:10px;margin:10px;max-width:420px'>"
+                      "<b>%s's village</b>%s — %s<br>%s%s"
+                      "<p><a href='/shelf/%s'>Visit %s's shelf</a></p>"
+                      "</div>"
+                      % (esc(p["username"]), you, dot, figs, more,
+                         esc(p["username"]), esc(p["username"])))
+        if not plots:
+            plots = ("<p style='background:rgba(255,255,255,0.85);"
+                     "border-radius:14px;padding:16px'>No villages yet "
+                     "— be the first to sign up and start one.</p>")
+        signin_note = "" if user else (
+            "<p><a href='/login'>Log in</a> or "
+            "<a href='/signup'>sign up</a> to appear in the scene "
+            "yourself.</p>")
+        html = ("<!DOCTYPE html><html><head><meta charset='utf-8'>"
+                "<meta name='viewport' content='width=device-width,"
+                "initial-scale=1'>"
+                "<meta http-equiv='refresh' content='60'>"
+                "<title>Play — Hoodie Babies Village</title>"
+                "<style>html,body{margin:0;padding:0;font-family:"
+                "system-ui,sans-serif} a{color:#14532d}</style>"
+                "</head><body><div style='min-height:100vh;"
+                "background:linear-gradient(#bfe3ff 0 35%,#d9f0c0 35%);"
+                "padding:16px;box-sizing:border-box'>"
+                "<h1 style='margin:0 0 4px'>🏘️ Hoodie Babies Village"
+                "</h1><p style='margin:0 0 12px'>Babies standing in "
+                "the village — tap one to see it up close. Online "
+                "means active in the last 5 minutes; the scene "
+                "refreshes every minute. "
+                "<a href='/village'>Village list</a> | "
+                "<a href='/browse'>Trade Board</a> | "
+                "<a href='/me'>My Collection</a></p>"
+                + signin_note + plots + "</div></body></html>")
+        self.send_html(html)
 
     def do_shelf_add(self, con, user):
         if self.need_login(user):
