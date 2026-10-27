@@ -1385,6 +1385,7 @@ def page(title, body, user=None):
                "<a href='/shop'>Shop</a> | "
                "<a href='/purchases'>Purchases</a> | "
                "<a href='/world'>World</a> | "
+               "<a href='/village'>Village</a> | "
                "<a href='/notices'>Notices</a> | "
                "<a href='/logout'>Log out (%s)</a> | "
                "%s</nav>%s" % (esc(user["username"]), share_btn,
@@ -1394,6 +1395,7 @@ def page(title, body, user=None):
                "<a href='/signup'>Sign up</a> | "
                "<a href='/shop'>Shop</a> | "
                "<a href='/world'>World</a> | "
+               "<a href='/village'>Village</a> | "
                "<a href='/notices'>Notices</a> | "
                "%s</nav>%s" % (share_btn, share_notice))
     return ("<!DOCTYPE html><html><head><meta charset='utf-8'>"
@@ -2095,6 +2097,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.gifts(con, user, query)
             elif path == "/points_market":
                 self.points_market(con, user)
+            elif path == "/village":
+                self.village_page(con, user)
             elif path == "/shelf":
                 self.shelf_page(con, user)
             elif path.startswith("/shelf/"):
@@ -4412,6 +4416,38 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.send_html(page("%s's Shelf" % esc(username),
                              self.shelf_body(con, owner, False), user))
+
+    def village_page(self, con, user):
+        """The Village showcase: every player's babies, out in the
+        open, grouped by player so anyone can browse through other
+        people's characters. Public — no login needed. Only usernames
+        and babies are shown, never anything private. Babies link to
+        their detail pages; each village links to its owner's shelf."""
+        players = con.execute(
+            "SELECT users.*, COUNT(babies.id) AS n FROM users LEFT JOIN "
+            "babies ON babies.owner_id = users.id WHERE users.username "
+            "!= 'underground' GROUP BY users.id HAVING n > 0 ORDER BY "
+            "users.username").fetchall()
+        body = ("<p>Every player's village, all in one place — browse "
+                "through other players' babies, tap one to see it up "
+                "close, or visit its owner's shelf.</p>")
+        if not players:
+            body += ("<p>No villages yet — be the first to sign up and "
+                     "start one.</p>")
+        for p in players:
+            babies = con.execute("SELECT * FROM babies WHERE owner_id=? "
+                                 "ORDER BY id", (p["id"],)).fetchall()
+            vcount, _vleaders = village_progress(con, p["id"])
+            tribe_line = ""
+            if _bget(p, "tribe"):
+                tribe_line = " — %s" % esc(tribe_display(p["tribe"]))
+            body += ("<h2>%s's village — %d / 40%s</h2>"
+                     "<p><a href='/shelf/%s'>Visit %s's shelf</a></p>"
+                     % (esc(p["username"]), vcount, tribe_line,
+                        esc(p["username"]), esc(p["username"])))
+            for b in babies:
+                body += baby_card(b)
+        self.send_html(page("Village", body, user))
 
     def do_shelf_add(self, con, user):
         if self.need_login(user):

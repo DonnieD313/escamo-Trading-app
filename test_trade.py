@@ -3019,6 +3019,17 @@ def main():
             check("recruit fully joins the player's tribe",
                   recruited["tribe"] == "Blues"
                   and recruited["color_theme"] is None)
+            # (k) Village showcase: public, every player's babies.
+            anon = http.cookiejar.CookieJar()
+            s, village = get(anon, "/village", base=pbase)
+            check("village showcase lists players and their babies",
+                  "shelfy's village" in village
+                  and "shelfy2's village" in village
+                  and sh_baby["name"] in village
+                  and "/shelf/shelfy" in village)
+            s, home = get(anon, "/", base=pbase)
+            check("village link appears in the logged-out menu",
+                  "/village" in home)
             pcongs.close()
             pcong4.close()
             pcong5.close()
