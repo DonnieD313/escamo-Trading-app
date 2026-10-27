@@ -3164,7 +3164,8 @@ def main():
                   and "class='bob'" in liveb)
             check("forest floor photo, trees and houses",
                   "#1e7a34" in liveb and "#4d7a2e" in liveb
-                  and "forest-floor.jpg" in liveb
+                  and "background-image:url(/img/forest-floor.jpg);background-size:100% 100%" in liveb
+                  and "url('/img/forest-floor.jpg')" not in liveb
                   and "hide here" in liveb
                   and "butterfly" not in liveb
                   and "Hoodie Shop" not in liveb
