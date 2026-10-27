@@ -2945,6 +2945,61 @@ def main():
                   and pcongs.execute(
                       "SELECT COUNT(*) FROM shelf_items WHERE "
                       "baby_id=?", (sh_baby["id"],)).fetchone()[0] == 0)
+            # (i) Post-trade color choice: display only, tribe stays.
+            sh2_baby = pcongs.execute(
+                "SELECT * FROM babies WHERE owner_id=?",
+                (pcongs.execute(
+                    "SELECT id FROM users WHERE username='shelfy2'"
+                    ).fetchone()[0],)).fetchone()
+            s, _ = post(sh, "/toggle_trade",
+                        {"baby_id": sh_baby["id"]}, base=pbase)
+            s, _ = post(sh2, "/offer",
+                        {"wanted_baby_id": sh_baby["id"],
+                         "offered_baby_id": sh2_baby["id"],
+                         "offered_points": "0"}, base=pbase)
+            trade_offer = pcongs.execute(
+                "SELECT * FROM offers WHERE from_user=? ORDER BY id "
+                "DESC LIMIT 1",
+                (pcongs.execute(
+                    "SELECT id FROM users WHERE username='shelfy2'"
+                    ).fetchone()[0],)).fetchone()
+            s, _ = post(sh, "/offer_action",
+                        {"offer_id": trade_offer["id"],
+                         "action": "accept"}, base=pbase)
+            choices = pcongs.execute(
+                "SELECT * FROM recolor_choices WHERE offer_id=?",
+                (trade_offer["id"],)).fetchall()
+            check("a color choice is created for each trader",
+                  len(choices) == 2)
+            s, offers_html = get(sh2, "/offers", base=pbase)
+            check("offers page shows the color choice",
+                  "Choose colors for babies you traded for"
+                  in offers_html
+                  and "Match my Fortress Rooted colors" in offers_html)
+            ch2 = [c for c in choices
+                   if c["baby_id"] == sh_baby["id"]][0]
+            s, _ = post(sh2, "/recolor",
+                        {"choice_id": ch2["id"],
+                         "decision": "recolor"}, base=pbase)
+            got = pcongs.execute(
+                "SELECT * FROM babies WHERE id=?",
+                (sh_baby["id"],)).fetchone()
+            check("recolor restyles the card but keeps the tribe",
+                  got["color_theme"] == "Browns"
+                  and got["tribe"] == "Blues")
+            s, me2 = get(sh2, "/me", base=pbase)
+            check("collection shows the recolored tag",
+                  "recolored to Fortress Rooted colors" in me2)
+            ch1 = [c for c in choices
+                   if c["baby_id"] == sh2_baby["id"]][0]
+            s, _ = post(sh, "/recolor",
+                        {"choice_id": ch1["id"],
+                         "decision": "keep"}, base=pbase)
+            kept = pcongs.execute(
+                "SELECT * FROM babies WHERE id=?",
+                (sh2_baby["id"],)).fetchone()
+            check("keep leaves colors untouched",
+                  kept["color_theme"] is None)
             pcongs.close()
             pcong4.close()
             pcong5.close()

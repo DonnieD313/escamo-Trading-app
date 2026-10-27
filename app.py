@@ -807,6 +807,25 @@ def init_db():
     if "shelf_style" not in user_cols:
         con.execute("ALTER TABLE users ADD COLUMN shelf_style "
                     "TEXT DEFAULT 'wood'")
+    if "tribe" not in user_cols:
+        con.execute("ALTER TABLE users ADD COLUMN tribe TEXT")
+    # Post-trade color choice: display only. A baby's real tribe
+    # never changes; color_theme only restyles its card to the new
+    # owner's tribe colors when they choose that. A recolor_choices
+    # row is created for each baby a player receives in a trade.
+    baby_cols = [r[1] for r in
+                 con.execute("PRAGMA table_info(babies)").fetchall()]
+    if "color_theme" not in baby_cols:
+        con.execute("ALTER TABLE babies ADD COLUMN color_theme TEXT")
+    con.execute("""
+    CREATE TABLE IF NOT EXISTS recolor_choices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        baby_id INTEGER NOT NULL REFERENCES babies(id),
+        offer_id INTEGER NOT NULL REFERENCES offers(id),
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )""")
     # Migration for the tribe renames: rewrite old tribe names in the
     # Notices board so no user-facing page still shows them.
     for old, new in (("Blacks", "Shadows"),
@@ -1738,14 +1757,30 @@ def baby_img_html(b, size=120):
     return portrait_svg(b, size)
 
 
+def user_tribe(con, user):
+    """The tribe a player joined at signup. Older accounts predate
+    the stored column — fall back to their longest-held baby's tribe."""
+    if _bget(user, "tribe"):
+        return user["tribe"]
+    row = con.execute("SELECT tribe FROM babies WHERE owner_id=? "
+                      "ORDER BY id LIMIT 1",
+                      (user["id"],)).fetchone()
+    return row["tribe"] if row else None
+
+
 def baby_card(b, owner_name=None, show_owner=False):
+    color = _bget(b, "color_theme") or _bget(b, "tribe")
+    recolor_tag = (" <span class='tag'>recolored to %s colors</span>"
+                   % esc(tribe_display(color))) \
+        if _bget(b, "color_theme") and color != _bget(b, "tribe") else ""
     out = ("<div class='card %s'><div style='text-align:center'>%s</div>"
            "<b>%s</b> %s <span class='tag'>%s</span> " \
-           "<span class='tag'>%s</span><br>" % (
-               theme_class(_bget(b, "tribe")),
+           "<span class='tag'>%s</span>%s<br>" % (
+               theme_class(color),
                baby_img_html(b), esc(b["name"]),
                gender_marker(_bget(b, "gender", "")),
-               esc(b["cert"]), esc(tribe_display(b["tribe"]))))
+               esc(b["cert"]), esc(tribe_display(b["tribe"])),
+               recolor_tag))
     out += ("Hoodie: %s<br>Rhinestones: %s<br>Stones: %d<br>Face: %s<br>"
             % (esc(b["hoodie_pattern"]), esc(b["stones"]),
                stone_count(b["tribe"], _bget(b, "cert"),
@@ -2136,6 +2171,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.do_points_buy(con, user)
             elif path == "/points_cancel":
                 self.do_points_cancel(con, user)
+            elif path == "/recolor":
+                self.do_recolor(con, user)
             elif path == "/shelf_add":
                 self.do_shelf_add(con, user)
             elif path == "/shelf_remove":
@@ -2525,9 +2562,9 @@ class Handler(BaseHTTPRequestHandler):
         # the character-creator unlock.
         cur = con.execute(
             "INSERT INTO users (username, password_hash, salt, invite_code,"
-            " invited_by, points) VALUES (?,?,?,?,?,?)",
+            " invited_by, points, tribe) VALUES (?,?,?,?,?,?,?)",
             (username, pending["password_hash"], pending["salt"], code,
-             pending["invited_by"], STARTING_POINTS))
+             pending["invited_by"], STARTING_POINTS, pending["tribe"]))
         user_id = cur.lastrowid
         # The free baby is the chosen character with the chosen name,
         # using the tribe's default pattern, rhinestones, and face.
@@ -2764,6 +2801,13 @@ class Handler(BaseHTTPRequestHandler):
                  "points-market sale.</p>"
                  "<p><a href='/shelf'>My Shelf</a> — arrange your "
                  "babies on display.</p>")
+        n_pending = con.execute(
+            "SELECT COUNT(*) FROM recolor_choices WHERE user_id=? AND "
+            "status='pending'", (user["id"],)).fetchone()[0]
+        if n_pending:
+            body += ("<p><a href='/offers'>You have a color choice "
+                     "waiting</a> for a baby you traded for — keep its "
+                     "original colors or match your tribe's.</p>")
         if query.get("msg"):
             body += "<p class='ok'>%s</p>" % esc(query["msg"][0])
         owned = user_owned_tribes(con, user["id"])
@@ -2987,7 +3031,39 @@ class Handler(BaseHTTPRequestHandler):
         outgoing = con.execute(
             "SELECT * FROM offers WHERE from_user=? ORDER BY id DESC",
             (user["id"],)).fetchall()
-        body = "<h2>Incoming offers</h2>"
+        body = ""
+        pending = con.execute(
+            "SELECT recolor_choices.*, babies.name AS baby_name FROM "
+            "recolor_choices JOIN babies ON babies.id = "
+            "recolor_choices.baby_id WHERE recolor_choices.user_id=? "
+            "AND recolor_choices.status='pending' ORDER BY id",
+            (user["id"],)).fetchall()
+        my_tribe = user_tribe(con, user)
+        if pending:
+            body += ("<h2>Choose colors for babies you traded for</h2>"
+                     "<p>Your baby's real tribe never changes — this "
+                     "only restyles its card. Keep its original colors, "
+                     "or match your own tribe's colors.</p>")
+            for c in pending:
+                body += ("<div class='card'><b>%s</b> — "
+                         "<form method='post' action='/recolor' "
+                         "style='display:inline'>"
+                         "<input type='hidden' name='choice_id' "
+                         "value='%d'><input type='hidden' "
+                         "name='decision' value='keep'>"
+                         "<button>Keep original colors</button></form> "
+                         % (esc(c["baby_name"]), c["id"]))
+                if my_tribe:
+                    body += ("<form method='post' action='/recolor' "
+                             "style='display:inline'>"
+                             "<input type='hidden' name='choice_id' "
+                             "value='%d'><input type='hidden' "
+                             "name='decision' value='recolor'>"
+                             "<button>Match my %s colors</button>"
+                             "</form>" % (c["id"],
+                                          esc(tribe_display(my_tribe))))
+                body += "</div>"
+        body += "<h2>Incoming offers</h2>"
         body += "".join(offer_block(o, True) for o in incoming) or "<p>None.</p>"
         body += "<h2>Outgoing offers</h2>"
         body += "".join(offer_block(o, False) for o in outgoing) or "<p>None.</p>"
@@ -3184,6 +3260,33 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.redirect("/gifts")
 
+    def do_recolor(self, con, user):
+        """Settle a post-trade color choice. Display only: 'keep'
+        leaves the card as-is, 'recolor' restyles it to the player's
+        own tribe colors. The baby's tribe column never changes."""
+        if self.need_login(user):
+            return
+        f = self.form()
+        c = con.execute("SELECT * FROM recolor_choices WHERE id=? AND "
+                        "user_id=? AND status='pending'",
+                        (f.get("choice_id"), user["id"])).fetchone()
+        if c:
+            baby = con.execute("SELECT * FROM babies WHERE id=?",
+                               (c["baby_id"],)).fetchone()
+            if baby and baby["owner_id"] == user["id"]:
+                if f.get("decision") == "recolor":
+                    tribe = user_tribe(con, user)
+                    if tribe:
+                        con.execute("UPDATE babies SET color_theme=? "
+                                    "WHERE id=?", (tribe, baby["id"]))
+                else:
+                    con.execute("UPDATE babies SET color_theme=NULL "
+                                "WHERE id=?", (baby["id"],))
+            con.execute("UPDATE recolor_choices SET status='done' "
+                        "WHERE id=?", (c["id"],))
+            con.commit()
+        self.redirect("/offers")
+
     def accept_offer(self, con, o):
         """Swap the babies, burn offered points, award 20 points to each
         trader (60 points to the buyer when the trade is for a Shadow).
@@ -3246,6 +3349,18 @@ class Handler(BaseHTTPRequestHandler):
         q = ",".join("?" * len(ids))
         con.execute("DELETE FROM shelf_items WHERE baby_id IN (%s)" % q,
                     ids)
+        # post-trade color choice: each trader gets to choose colors
+        # for the baby they just received — keep its original colors
+        # or restyle its card to their own tribe's colors. The baby's
+        # real tribe never changes, so tribe counts and ownership
+        # titles are untouched.
+        con.execute("INSERT INTO recolor_choices (user_id, baby_id, "
+                    "offer_id) VALUES (?,?,?)",
+                    (o["from_user"], wanted["id"], o["id"]))
+        if offered:
+            con.execute("INSERT INTO recolor_choices (user_id, baby_id, "
+                        "offer_id) VALUES (?,?,?)",
+                        (o["to_user"], offered["id"], o["id"]))
         # withdraw other pending offers touching the traded babies
         ids = [wanted["id"]] + ([offered["id"]] if offered else [])
         q = ",".join("?" * len(ids))
