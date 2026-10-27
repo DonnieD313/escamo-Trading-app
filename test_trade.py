@@ -3053,7 +3053,7 @@ def main():
             # (m) Live World: move around together + chat.
             s, live = get(anon, "/live", base=pbase)
             check("live world page loads with field and controls",
-                  "Live World" in live and "🌳" in live
+                  "Live World" in live and "#1e7a34" in live
                   and "play_state" in live)
             check("live layout stacks without fixed overlays",
                   "100dvh" in live and "flex:1" in live
@@ -3182,8 +3182,15 @@ def main():
             # (q) Robot babies with photo faces, punch + pick up.
             check("live page builds blocky robots with photo faces",
                   "walkerSVG" not in liveb and "robotHTML" in liveb
-                  and "leg leg-l" in liveb and "robostep" in liveb
+                  and "leg leg-l" in liveb and "arm arm-l" in liveb
+                  and "antenna" in liveb and "robostep" in liveb
                   and "p.avatar" in liveb and "me-ava" in liveb)
+            check("fight grounds have blocky trees, rivers and huts",
+                  "#1e7a34" in liveb and "#3b82f6" in liveb
+                  and "hide here" in liveb
+                  and "butterfly" not in liveb)
+            check("taps on characters are no longer ignored",
+                  "closest('#players')" not in liveb)
             check("live page has no arrow buttons",
                   "⬆️" not in liveb and "⬇️" not in liveb)
             s, live_signed = get(sh, "/live", base=pbase)
@@ -3200,7 +3207,9 @@ def main():
             pick_items = json.loads(pick_state)["items"]
             check("live state carries field items to pick up",
                   len(pick_items) > 0
-                  and any(i["kind"] == "🌸" for i in pick_items))
+                  and any(i["kind"] == "🌸" for i in pick_items)
+                  and any(i["kind"] == "⭐" for i in pick_items)
+                  and not any(i["kind"] == "🦋" for i in pick_items))
             post(sh, "/play_move", {"x": "20", "y": "20"}, base=pbase)
             s, picked = post(sh, "/pickup", {}, base=pbase)
             check("pickup near a flower succeeds",

@@ -898,11 +898,13 @@ def init_db():
         kind TEXT NOT NULL,
         picked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
+    con.execute("UPDATE field_items SET kind='⭐' WHERE kind='🦋'")
+    con.execute("UPDATE carried_items SET kind='⭐' WHERE kind='🦋'")
     if con.execute("SELECT COUNT(*) FROM field_items").fetchone()[0] == 0:
         for kind, x, y in (("🌸", 20, 20), ("🌼", 70, 15),
-                           ("⚽", 45, 55), ("🦋", 80, 40),
+                           ("⚽", 45, 55), ("⭐", 80, 40),
                            ("🌸", 30, 70), ("⚽", 60, 25),
-                           ("🌼", 15, 45), ("🦋", 55, 75)):
+                           ("🌼", 15, 45), ("⭐", 55, 75)):
             con.execute("INSERT INTO field_items (kind, x, y) "
                         "VALUES (?, ?, ?)", (kind, x, y))
     # Migration for the tribe renames: rewrite old tribe names in the
@@ -5015,13 +5017,39 @@ class Handler(BaseHTTPRequestHandler):
                 "text-align:center'><a href='/login'>Log in</a> or "
                 "<a href='/signup'>sign up</a> to walk around and "
                 "chat — you can watch everyone else meanwhile.</div>")
-        trees = "".join(
-            "<span style='position:absolute;left:%d%%;top:%d%%;"
-            "font-size:52px' aria-hidden='true'>%s</span>"
-            % (lx, ty, tree)
-            for lx, ty, tree in
-            [(4, 15, "🌳"), (88, 12, "🌲"), (12, 70, "🌲"),
-             (82, 65, "🌳"), (48, 18, "🌳")])
+        def blocky_tree(lx, ty):
+            return ("<div style='position:absolute;left:%d%%;top:%d%%;"
+                    "width:44px;margin-left:-22px;text-align:center'"
+                    " aria-hidden='true'>"
+                    "<div style='width:34px;height:28px;background:#1e7a34;"
+                    "border:3px solid #14532d;border-radius:4px;margin:0 auto'></div>"
+                    "<div style='width:10px;height:18px;background:#7a4a21;"
+                    "margin:0 auto'></div></div>" % (lx, ty))
+        trees = "".join(blocky_tree(lx, ty) for lx, ty in
+                         [(4, 15), (88, 12), (12, 70), (82, 65), (48, 18),
+                          (24, 40), (68, 80), (90, 38)])
+        rivers = ("<div style='position:absolute;left:0;right:0;top:30%;"
+                  "height:22px;background:#3b82f6;border-top:3px solid #1d4ed8;"
+                  "border-bottom:3px solid #1d4ed8'></div>"
+                  "<div style='position:absolute;left:0;right:0;top:64%;"
+                  "height:22px;background:#3b82f6;border-top:3px solid #1d4ed8;"
+                  "border-bottom:3px solid #1d4ed8'></div>")
+        def blocky_hut(lx, ty):
+            return ("<div style='position:absolute;left:%d%%;top:%d%%;"
+                    "width:88px;margin-left:-44px;margin-top:-51px;text-align:center;z-index:5'"
+                    " aria-hidden='true'>"
+                    "<div style='width:0;height:0;border-left:44px solid transparent;"
+                    "border-right:44px solid transparent;border-bottom:34px solid #b45309;"
+                    "margin:0 auto'></div>"
+                    "<div style='width:76px;height:52px;background:#d9a066;"
+                    "border:3px solid #7a4a21;margin:0 auto;position:relative'>"
+                    "<div style='width:22px;height:34px;background:#5b3a1a;"
+                    "position:absolute;left:27px;bottom:0'></div></div>"
+                    "<div style='font-size:11px;background:rgba(255,255,255,0.8);"
+                    "border-radius:6px;padding:0 4px;display:inline-block'>hide here</div></div>"
+                    % (lx, ty))
+        huts = "".join(blocky_hut(lx, ty) for lx, ty in
+                        [(25, 22), (70, 50), (42, 78)])
         clouds = "".join(
             "<span style='position:absolute;left:%d%%;top:%d%%;'"
             "font-size:40px' aria-hidden='true'>☁️</span>"
@@ -5042,6 +5070,11 @@ class Handler(BaseHTTPRequestHandler):
                 "steps(2,end) infinite alternate} "
                 ".walking .leg-r{animation:robostep .4s "
                 "steps(2,end) infinite alternate-reverse} "
+                ".walking .leg-l,.walking .leg-r,.walking .arm-l,.walking .arm-r{transform-origin:50% 0} "
+                ".walking .arm-l{animation:robostep .4s "
+                "steps(2,end) infinite alternate-reverse} "
+                ".walking .arm-r{animation:robostep .4s "
+                "steps(2,end) infinite alternate} "
                 ".idle{animation:bob 1.6s ease-in-out infinite alternate} "
                 "@keyframes bob{from{transform:translate(-50%,-50%)}"
                 "to{transform:translate(-50%,-54%)}} "
@@ -5087,8 +5120,8 @@ class Handler(BaseHTTPRequestHandler):
                 "<div style='position:absolute;left:8px;top:69%;"
                 "font-size:13px;background:rgba(255,255,255,0.7);"
                 "border-radius:8px;padding:1px 6px'>🌲 Fortress "
-                "Rooted village</div>" + clouds + trees +
-                "<div id='players'></div><div id='items'></div></div>"
+                "Rooted village</div>" + clouds + trees + rivers +
+                "<div id='players'></div><div id='items'></div>" + huts + "</div>"
                 "<div id='chatlog' style='max-height:64px;"
                 "overflow:auto;padding:6px 10px;font-size:13px;"
                 "background:#f5f5f5;border-top:1px solid #ccc'>"
@@ -5097,7 +5130,7 @@ class Handler(BaseHTTPRequestHandler):
                 "var ME=" + json.dumps(me) + ";var POS=null;"
                 "function esc(s){return s.replace(/&/g,'&amp;')"
                 ".replace(/</g,'&lt;');}"
-                "function robotHTML(p){var c={Blues:'#2b5ea7',Browns:'#7a4a21',Reds:'#c0392b',Dummy:'#888'}[p.tribe]||'#2b5ea7';if(p.dummy){return \"<div style='font-size:60px;line-height:1'>🎯</div>\";}var tmp=document.createElement('div');tmp.innerHTML=p.avatar;var im=tmp.querySelector('img');var src=im?im.getAttribute('src'):'';var head=src?\"<img src='\"+src+\"' style='width:54px;height:54px;object-fit:cover;object-position:50% 22%;border:3px solid \"+c+\";border-radius:8px;display:block;margin:0 auto'>\":\"<div style='width:54px;height:54px;background:\"+c+\";border-radius:8px;margin:0 auto;font-size:30px;line-height:54px'>🧸</div>\";return \"<div style='width:76px;margin:0 auto'>\"+head+\"<div style='width:52px;height:40px;background:\"+c+\";border:3px solid #333;border-radius:6px;margin:2px auto 0;position:relative'><span style='position:absolute;left:8px;top:8px;color:#ffd700'>✦</span><span style='position:absolute;left:22px;top:15px;color:#ffd700'>✦</span><span style='position:absolute;left:34px;top:6px;color:#ffd700'>✦</span><span style='position:absolute;left:-13px;top:4px;width:10px;height:28px;background:#333;border-radius:3px'></span><span style='position:absolute;right:-13px;top:4px;width:10px;height:28px;background:#333;border-radius:3px'></span></div><div style='display:flex;justify-content:center;gap:14px'><div class='leg leg-l' style='width:13px;height:22px;background:#333;border-radius:3px'></div><div class='leg leg-r' style='width:13px;height:22px;background:#333;border-radius:3px'></div></div></div>\";}"
+                "function robotHTML(p){var c={Blues:'#2b5ea7',Browns:'#7a4a21',Reds:'#c0392b',Dummy:'#888'}[p.tribe]||'#2b5ea7';if(p.dummy){return \"<div style='font-size:60px;line-height:1'>🎯</div>\";}var tmp=document.createElement('div');tmp.innerHTML=p.avatar;var im=tmp.querySelector('img');var src=im?im.getAttribute('src'):'';var antenna=\"<div style='width:6px;height:14px;background:#333;margin:0 auto'></div><div style='width:14px;height:14px;background:#ffd700;border:2px solid #333;border-radius:50%;margin:0 auto'></div>\";var head=src?\"<img src='\"+src+\"' style='width:64px;height:64px;object-fit:cover;object-position:50% 22%;border:4px solid \"+c+\";border-radius:2px;display:block;margin:0 auto'>\":\"<div style='width:64px;height:64px;background:\"+c+\";border:4px solid #333;border-radius:2px;margin:0 auto;font-size:30px;line-height:64px'>🧸</div>\";return \"<div style='width:76px;margin:0 auto'>\"+antenna+head+\"<div style='width:52px;height:40px;background:\"+c+\";border:3px solid #333;border-radius:6px;margin:2px auto 0;position:relative'><span style='position:absolute;left:8px;top:8px;color:#ffd700'>✦</span><span style='position:absolute;left:22px;top:15px;color:#ffd700'>✦</span><span style='position:absolute;left:34px;top:6px;color:#ffd700'>✦</span><span class='arm arm-l' style='position:absolute;left:-13px;top:4px;width:10px;height:28px;background:#333;border-radius:3px'></span><span class='arm arm-r' style='position:absolute;right:-13px;top:4px;width:10px;height:28px;background:#333;border-radius:3px'></span></div><div style='display:flex;justify-content:center;gap:14px'><div class='leg leg-l' style='width:13px;height:22px;background:#333;border-radius:3px'></div><div class='leg leg-r' style='width:13px;height:22px;background:#333;border-radius:3px'></div></div></div>\";}"
 "function render(st){window._ST=st;var h='';"
                 "st.players.forEach(function(p,i){"
                 "if(p.you&&!POS){POS={x:p.x,y:p.y};}"
@@ -5167,7 +5200,7 @@ class Handler(BaseHTTPRequestHandler):
                 "p.username+'!'):('You hit '+p.username+' — '+d.hp+"
                 "' health left.');window._SHAKE=p.username;window._LUNGE=ME;window._BURST=p.username;}poll();});}"
                 "function punchNearest(){if(!ME||!POS){return;}var best=-1;var bd=1e9;window._ST.players.forEach(function(p,i){if(p.you){return;}var dx=Math.abs(p.x-POS.x);var dy=Math.abs(p.y-POS.y);if(dx<=15&&dy<=15&&dx+dy<bd){bd=dx+dy;best=i;}});if(best<0){var m=document.getElementById('fightmsg');m.textContent='Nobody close enough to punch — walk up to someone or the practice dummy.';return;}hitIdx(best);}"
-                "function pickup(){if(!ME){return;}var f=new URLSearchParams();f.append('csrf_token',CSRF);fetch('/pickup',{method:'POST',body:f}).then(function(r){return r.json();}).then(function(d){var m=document.getElementById('fightmsg');if(!d.ok){m.textContent='Nothing close enough to pick up — walk up to a flower, ball, or butterfly.';}else{m.textContent='You picked up '+d.kind+'!';}poll();});}"
+                "function pickup(){if(!ME){return;}var f=new URLSearchParams();f.append('csrf_token',CSRF);fetch('/pickup',{method:'POST',body:f}).then(function(r){return r.json();}).then(function(d){var m=document.getElementById('fightmsg');if(!d.ok){m.textContent='Nothing close enough to pick up — walk up to a flower, ball, or star.';}else{m.textContent='You picked up '+d.kind+'!';}poll();});}"
                 "document.addEventListener('keydown',function(e){"
                 "if(document.activeElement&&document.activeElement"
                 ".id==='chatin'){return;}"
@@ -5187,20 +5220,17 @@ class Handler(BaseHTTPRequestHandler):
                 "CSRF);f.append('x',POS.x);f.append('y',POS.y);"
                 "fetch('/play_move',{method:'POST',body:f});poll();}"
                 "fld.addEventListener('touchstart',function(e){"
-                "if(e.target.closest('button')||e.target.closest("
-                "'#players')){return;}var t=e.touches[0];"
+                "if(e.target.closest('button')){return;}var t=e.touches[0];"
                 "goTo(t.clientX,t.clientY);e.preventDefault();},"
                 "{passive:false});"
                 "fld.addEventListener('touchmove',function(e){"
-                "if(e.target.closest('button')||e.target.closest("
-                "'#players')){return;}var t=e.touches[0];"
+                "if(e.target.closest('button')){return;}var t=e.touches[0];"
                 "goTo(t.clientX,t.clientY);e.preventDefault();},"
                 "{passive:false});"
                 "fld.addEventListener('touchend',function(e){"
                 "goTo(lastTX,lastTY,true);});"
                 "fld.addEventListener('click',function(e){"
-                "if(e.target.closest('button')||e.target.closest("
-                "'#players')){return;}goTo(e.clientX,e.clientY);});"
+                "if(e.target.closest('button')){return;}goTo(e.clientX,e.clientY);});"
                 "var cf=document.getElementById('chatform');"
                 "if(cf){cf.addEventListener('submit',function(e){"
                 "e.preventDefault();var inp=document.getElementById"
