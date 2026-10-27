@@ -1898,6 +1898,33 @@ def main():
                   "Turn around" in browse2_html
                   and "Back of jacket" in browse2_html
                   and "flipinner" in browse2_html)
+            check("board cards drag to turn",
+                  "flipstage" in browse2_html
+                  and "pointerdown" in browse2_html)
+            bcon = sqlite3.connect(DB)
+            bcon.row_factory = sqlite3.Row
+            board_id = bcon.execute(
+                "SELECT id FROM users WHERE username='board'"
+                ).fetchone()["id"]
+            bcon.execute("UPDATE babies SET for_trade=1 WHERE owner_id=?",
+                         (board_id,))
+            bcon.commit()
+            own = bcon.execute(
+                "SELECT * FROM babies WHERE owner_id=? LIMIT 1",
+                (board_id,)).fetchone()
+            bcon.close()
+            s, own_html = get(board_jar, "/browse")
+            check("board shows your own baby for trade",
+                  own["name"] in own_html
+                  and "<b>Yours</b>" in own_html)
+            check("your own baby has no offer form on the board",
+                  ("wanted_baby_id' value='%d'" % own["id"])
+                  not in own_html)
+            s, self_offer = post(board_jar, "/offer",
+                                 {"wanted_baby_id": str(own["id"]),
+                                  "offered_points": "0"})
+            check("offering on your own baby is refused",
+                  "not up for trade" in self_offer)
             mcon = sqlite3.connect(DB)
             mcon.row_factory = sqlite3.Row
             photo_row = mcon.execute(

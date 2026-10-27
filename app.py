@@ -1929,7 +1929,7 @@ def baby_card(b, owner_name=None, show_owner=False, flip=False):
     back = ("<div style='text-align:left'><b>Back of jacket</b> "
             "<span class='tag'>details card — not a photo</span><br>%s</div>"
             % specs)
-    return ("<div class='card %s'><div style='perspective:600px'>"
+    return ("<div class='card %s'><div class='flipstage' data-inner='%s' style='perspective:600px;touch-action:none'>"
             "<div id='%s' style='position:relative;transition:transform .6s;"
             "transform-style:preserve-3d'>"
             "<div style='backface-visibility:hidden'>%s%s</div>"
@@ -1938,7 +1938,7 @@ def baby_card(b, owner_name=None, show_owner=False, flip=False):
             "<button onclick=\"var e=document.getElementById('%s');"
             "e.style.transform=(e.style.transform=='rotateY(180deg)'?'':'rotateY(180deg)');"
             "return false;\">\u21bb Turn around</button></div>"
-            % (theme_class(color), inner_id, front, link, back, inner_id))
+            % (theme_class(color), inner_id, inner_id, front, link, back, inner_id))
 
 
 
@@ -3067,8 +3067,7 @@ class Handler(BaseHTTPRequestHandler):
         rows = con.execute(
             "SELECT babies.*, users.username AS owner FROM babies "
             "JOIN users ON users.id = babies.owner_id "
-            "WHERE babies.for_trade=1 AND babies.owner_id != ? ORDER BY id",
-            (user["id"],)).fetchall()
+            "WHERE babies.for_trade=1 ORDER BY id").fetchall()
         cap = trade_cap(con, user["id"])
         body = ("<p>Tap a baby to make an offer for it. Your trade "
                 "slots: at most <b>%d</b> pending offer(s) at once "
@@ -3080,6 +3079,11 @@ class Handler(BaseHTTPRequestHandler):
             body += "<p>No babies are up for trade right now.</p>"
         for b in rows:
             body += baby_card(b, b["owner"], show_owner=True, flip=True)
+            if b["owner_id"] == user["id"]:
+                body += ("<p><b>Yours</b> — on the board for other "
+                         "players to offer on. You can't offer on your "
+                         "own baby.</p>")
+                continue
             if b["tribe"] == "Blacks":
                 body += ("<p><b>Trading for a Shadow starts at 1,200 "
                          "points.</b></p>")
@@ -3096,6 +3100,18 @@ class Handler(BaseHTTPRequestHandler):
             trade completes — the other player does not receive
             them.</small><br><button>Send offer</button></form>"""
                      % (b["id"], opts))
+        body += """<script>
+        document.querySelectorAll('.flipstage').forEach(function(st){
+        var inner=document.getElementById(st.dataset.inner);
+        var startX=null,base=0,moved=0;
+        st.addEventListener('pointerdown',function(e){startX=e.clientX;base=(inner.style.transform=='rotateY(180deg)')?180:0;moved=0;inner.style.transition='none';});
+        st.addEventListener('pointermove',function(e){if(startX===null)return;var d=base+(e.clientX-startX)/2;if(d<0)d=0;if(d>180)d=180;inner.style.transform='rotateY('+d+'deg)';if(Math.abs(e.clientX-startX)>8)moved=1;});
+        function endTurn(){if(startX===null)return;startX=null;inner.style.transition='transform .6s';var cur=parseFloat(inner.style.transform.replace('rotateY(','').replace('deg)',''));inner.style.transform=(cur>90)?'rotateY(180deg)':'';}
+        st.addEventListener('pointerup',endTurn);
+        st.addEventListener('pointercancel',endTurn);
+        st.addEventListener('click',function(e){if(moved){e.preventDefault();e.stopPropagation();}},{capture:true});
+        });
+        </script>"""
         self.send_html(page("Trade Board", body, user))
 
     def do_offer(self, con, user):
