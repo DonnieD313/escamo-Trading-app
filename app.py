@@ -18,6 +18,7 @@ import base64
 import datetime
 from decimal import Decimal, ROUND_HALF_UP
 import hashlib
+import hmac
 import html
 import json
 import os
@@ -2231,6 +2232,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.signup_form(query)
             elif path == "/login":
                 self.login_form()
+            elif path == "/forgot":
+                self.forgot_form()
             elif path == "/logout":
                 self.do_logout(con)
             elif path == "/me":
@@ -2314,6 +2317,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.do_signup_step2(con)
             elif path == "/login":
                 self.do_login(con)
+            elif path == "/reset_password":
+                self.do_reset_password(con)
             elif path == "/toggle_trade":
                 self.do_toggle(con, user)
             elif path == "/buy":
@@ -2613,8 +2618,68 @@ class Handler(BaseHTTPRequestHandler):
         body = msg + """<form method='post' action='/login'>
         Username: <input name='username' required><br>
         Password: <input type='password' name='password' required><br>
-        <button>Log in</button></form>"""
+        <button>Log in</button></form><p><a href='/forgot'>Forgot your password?</a></p>"""
         self.send_html(page("Log in", body))
+
+    def forgot_form(self, msg=""):
+        body = msg + """<form method='post' action='/reset_password'>
+        Username: <input name='username' required><br>
+        Founder code: <input name='founder_code' required><br>
+        New password: <input type='password' name='new_password' required><br>
+        <button>Reset password</button></form>
+        <p>The founder code is a secret code the founder sets in the
+        app's Render environment. It is never shown here and is never
+        sent to anyone — only the founder knows it.</p>"""
+        self.send_html(page("Forgot password", body))
+
+    def do_reset_password(self, con):
+        f = self.form()
+        key = "reset:" + self.client_address[0]
+        if rate_blocked(key):
+            self.send_html(page(
+                "Too many attempts",
+                "<p class='err'>Too many reset attempts from this "
+                "address — please wait a few minutes and try again.</p>"),
+                429)
+            return
+        founder_code = os.environ.get("FOUNDER_RESET_CODE", "")
+        if not founder_code:
+            rate_record_fail(key)
+            self.forgot_form("<p class='err'>Password reset is not set "
+                             "up yet — the founder code has not been "
+                             "added to the app's environment.</p>")
+            return
+        if not hmac.compare_digest(f.get("founder_code", ""),
+                                   founder_code):
+            rate_record_fail(key)
+            self.forgot_form("<p class='err'>That founder code is "
+                             "wrong.</p>")
+            return
+        username = (f.get("username") or "").strip()
+        new_password = f.get("new_password") or ""
+        row = con.execute("SELECT * FROM users WHERE username=?",
+                          (username,)).fetchone()
+        if not row:
+            rate_record_fail(key)
+            self.forgot_form("<p class='err'>No account with that "
+                             "username.</p>")
+            return
+        if not new_password:
+            rate_record_fail(key)
+            self.forgot_form("<p class='err'>A new password is "
+                             "required.</p>")
+            return
+        salt = secrets.token_hex(16)
+        con.execute("UPDATE users SET password_hash=?, salt=? "
+                    "WHERE id=?",
+                    (hash_password(new_password, salt), salt,
+                     row["id"]))
+        con.execute("DELETE FROM sessions WHERE user_id=?",
+                    (row["id"],))
+        con.commit()
+        rate_clear(key)
+        self.login_form("<p class='ok'>Password reset — sign in with "
+                        "your new password.</p>")
 
     def do_logout(self, con):
         cookie = self.headers.get("Cookie", "")

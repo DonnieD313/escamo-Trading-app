@@ -1497,6 +1497,61 @@ def main():
             except subprocess.TimeoutExpired:
                 hproc.kill()
 
+        # 15b. Forgot password: a founder code from the environment
+        # lets a locked-out player set a new password.
+        rport, rdb = 8100, "/tmp/escamo_reset_test.db"
+        rproc, rbase = start_server(rport, rdb,
+                                    {"FOUNDER_RESET_CODE":
+                                     "founder-test-code"})
+        try:
+            rjar = http.cookiejar.CookieJar()
+            s, _ = signup_full(rjar, "resetuser", "oldpass",
+                               base=rbase)
+            check("reset-test user signs up", s in (200, 302))
+            s, login_html = get(rjar, "/login", base=rbase)
+            check("login page links to forgot password",
+                  "/forgot" in login_html)
+            s, forgot_html = get(rjar, "/forgot", base=rbase)
+            check("forgot page asks for founder code",
+                  "Founder code" in forgot_html)
+            s, wrong = post(rjar, "/reset_password",
+                            {"username": "resetuser",
+                             "founder_code": "nope",
+                             "new_password": "newpass"},
+                            base=rbase)
+            check("wrong founder code refuses reset",
+                  "founder code is wrong" in wrong)
+            s, missing = post(rjar, "/reset_password",
+                              {"username": "ghost",
+                               "founder_code": "founder-test-code",
+                               "new_password": "newpass"},
+                              base=rbase)
+            check("reset for unknown user is refused",
+                  "No account" in missing)
+            s, done = post(rjar, "/reset_password",
+                           {"username": "resetuser",
+                            "founder_code": "founder-test-code",
+                            "new_password": "newpass"},
+                           base=rbase)
+            check("correct founder code resets the password",
+                  "Password reset" in done)
+            s, old_body = post(rjar, "/login",
+                               {"username": "resetuser",
+                                "password": "oldpass"}, base=rbase)
+            check("old password stops working after reset",
+                  "Wrong username" in old_body)
+            s, me_html = post(rjar, "/login",
+                              {"username": "resetuser",
+                               "password": "newpass"}, base=rbase)
+            check("new password signs in after reset",
+                  "My Collection" in me_html)
+        finally:
+            rproc.terminate()
+            try:
+                rproc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                rproc.kill()
+
         # 16. Deals, monthly gift, choice babies, pop-ups, ownership,
         # gender (mocked PayPal server).
         check("deal price 25% off $1.99 is $1.49",
