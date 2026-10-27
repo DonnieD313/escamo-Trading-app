@@ -1420,6 +1420,7 @@ def page(title, body, user=None):
                "<a href='/village'>Village</a> | "
                "<a href='/play'>Play</a> | "
                "<a href='/live'>Live</a> | "
+               "<a href='/trading'>Trading Room</a> | "
                "<a href='/notices'>Notices</a> | "
                "<a href='/logout'>Log out (%s)</a> | "
                "%s</nav>%s" % (esc(user["username"]), share_btn,
@@ -1432,6 +1433,7 @@ def page(title, body, user=None):
                "<a href='/village'>Village</a> | "
                "<a href='/play'>Play</a> | "
                "<a href='/live'>Live</a> | "
+               "<a href='/trading'>Trading Room</a> | "
                "<a href='/notices'>Notices</a> | "
                "%s</nav>%s" % (share_btn, share_notice))
     return ("<!DOCTYPE html><html><head><meta charset='utf-8'>"
@@ -2155,6 +2157,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.play_page(con, user)
             elif path == "/live":
                 self.live_page(con, user)
+            elif path == "/trading":
+                self.trading_room(con, user)
             elif path == "/play_state":
                 self.play_state(con, user)
             elif path == "/shelf":
@@ -4610,8 +4614,20 @@ class Handler(BaseHTTPRequestHandler):
                 + "</div></body></html>")
         self.send_html(html)
 
-    def _spawn(self, user_id):
-        return (20 + (user_id * 37 % 60), 30 + (user_id * 23 % 40))
+    def _spawn(self, user_id, tribe=None):
+        """Spawn inside your own tribe's village band: sky on top
+        (Windyworrors), water in the middle (Waterliewaveminans),
+        woods at the bottom (Fortress Rooted)."""
+        x = 15 + (user_id * 37 % 65)
+        if tribe == "Reds":
+            y = 10 + (user_id * 23 % 12)
+        elif tribe == "Blues":
+            y = 38 + (user_id * 23 % 14)
+        elif tribe == "Browns":
+            y = 70 + (user_id * 23 % 12)
+        else:
+            y = 45 + (user_id * 23 % 10)
+        return (x, y)
 
     def _live_players(self, con, user):
         """Everyone with a baby, where they stand in the Live World,
@@ -4645,7 +4661,7 @@ class Handler(BaseHTTPRequestHandler):
             if pos:
                 x, y = pos["x"], pos["y"]
             else:
-                x, y = self._spawn(p["id"])
+                x, y = self._spawn(p["id"], user_tribe(con, p))
             hrow = con.execute("SELECT * FROM play_health WHERE "
                                "user_id=?", (p["id"],)).fetchone()
             hp = hrow["hp"] if hrow else 100
@@ -4724,13 +4740,14 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"ok": False, "error": "away"}, 400)
             return
 
-        def pos_of(uid):
+        def pos_of(u):
             row = con.execute("SELECT * FROM player_positions WHERE "
-                              "user_id=?", (uid,)).fetchone()
-            return (row["x"], row["y"]) if row else self._spawn(uid)
+                              "user_id=?", (u["id"],)).fetchone()
+            return (row["x"], row["y"]) if row else self._spawn(
+                u["id"], user_tribe(con, u))
 
-        ax, ay = pos_of(user["id"])
-        tx, ty = pos_of(target["id"])
+        ax, ay = pos_of(user)
+        tx, ty = pos_of(target)
         if abs(ax - tx) > 15 or abs(ay - ty) > 15:
             self.send_json({"ok": False, "error": "too_far"}, 400)
             return
@@ -4753,7 +4770,7 @@ class Handler(BaseHTTPRequestHandler):
         ko = hp <= 0
         if ko:
             hp = 100
-            sx, sy = self._spawn(target["id"])
+            sx, sy = self._spawn(target["id"], user_tribe(con, target))
             con.execute("INSERT INTO player_positions (user_id, x, y, "
                         "updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)"
                         " ON CONFLICT(user_id) DO UPDATE SET x=excluded.x,"
@@ -4859,20 +4876,43 @@ class Handler(BaseHTTPRequestHandler):
                 "system-ui,sans-serif} body{display:flex;"
                 "flex-direction:column;height:100vh;height:100dvh;"
                 "overflow:hidden} button{padding:10px 14px;"
-                "font-size:18px} a{color:#14532d}</style>"
+                "font-size:18px} a{color:#14532d} "
+                "@keyframes waddle{from{transform:translate(-50%,"
+                "-50%) rotate(-4deg)}to{transform:translate(-50%,"
+                "-50%) rotate(4deg) translateY(-4px)}} "
+                ".walking{animation:waddle .35s ease-in-out infinite "
+                "alternate}</style>"
                 "</head><body>"
                 "<div style='padding:6px 10px;display:flex;"
                 "flex-wrap:wrap;gap:8px;align-items:center;"
                 "justify-content:space-between;background:#fff;"
                 "border-bottom:1px solid #ccc'><b>🌍 Live World</b>"
+                "<span id='zonelabel' style='font-size:13px'></span>"
                 "<span style='font-size:13px'>"
                 "<a href='/play'>Play scene</a> | "
+                "<a href='/trading'>Trading Room</a> | "
                 "<a href='/village'>Village list</a> | "
                 "<a href='/me'>My Collection</a></span></div>"
                 "<div id='field' style='position:relative;flex:1;"
-                "min-height:0;overflow:hidden;"
+                "min-height:0;overflow:hidden;touch-action:none;"
                 "background:linear-gradient(#bfe3ff 0 30%,#b7e39a "
-                "30%);'>" + trees +
+                "30%);'>"
+                "<div style='position:absolute;left:0;right:0;top:33%;"
+                "border-top:2px dashed rgba(255,255,255,0.7)'></div>"
+                "<div style='position:absolute;left:0;right:0;top:66%;"
+                "border-top:2px dashed rgba(255,255,255,0.7)'></div>"
+                "<div style='position:absolute;left:8px;top:4px;"
+                "font-size:13px;background:rgba(255,255,255,0.7);"
+                "border-radius:8px;padding:1px 6px'>☁️ Windyworrors "
+                "village</div>"
+                "<div style='position:absolute;left:8px;top:36%;"
+                "font-size:13px;background:rgba(255,255,255,0.7);"
+                "border-radius:8px;padding:1px 6px'>🌊 "
+                "Waterliewaveminans village</div>"
+                "<div style='position:absolute;left:8px;top:69%;"
+                "font-size:13px;background:rgba(255,255,255,0.7);"
+                "border-radius:8px;padding:1px 6px'>🌲 Fortress "
+                "Rooted village</div>" + trees +
                 "<div id='players'></div></div>"
                 "<div id='chatlog' style='max-height:64px;"
                 "overflow:auto;padding:6px 10px;font-size:13px;"
@@ -4885,17 +4925,29 @@ class Handler(BaseHTTPRequestHandler):
                 "function render(st){window._ST=st;var h='';"
                 "st.players.forEach(function(p,i){"
                 "if(p.you&&!POS){POS={x:p.x,y:p.y};}"
+                "if(p.you){var zl=document.getElementById('zonelabel');"
+                "if(zl){zl.textContent='You are in '+(p.y<33?"
+                "'Windyworrors village':p.y<66?'Waterliewaveminans "
+                "village':'Fortress Rooted village');}}"
+                "var lk=window._LAST&&window._LAST[p.username];"
+                "var moved=lk&&(lk[0]!==p.x||lk[1]!==p.y);"
+                "window._LAST=window._LAST||{};"
+                "window._LAST[p.username]=[p.x,p.y];"
                 "var dot=p.online?\"<span style='color:green'>●"
                 "</span>\":\"<span style='color:#888'>●</span>\";"
                 "var bub=p.bubble?\"<div style='background:white;"
                 "border-radius:10px;padding:4px 8px;font-size:13px;"
                 "max-width:160px'>\"+esc(p.bubble)+\"</div>\":'';"
-                "h+=\"<div style='position:absolute;left:\"+p.x+\"%;"
+                "h+=\"<div class='\"+(moved?\"walking\":\"\")+\"' "
+                "style='position:absolute;transition:left .6s linear,"
+                "top .6s linear;left:\"+p.x+\"%;"
                 "top:\"+p.y+\"%;transform:translate(-50%,-50%);"
                 "text-align:center'>\"+bub+\"<div>\"+p.avatar+\"</div>"
                 "<div style='background:rgba(255,255,255,0.85);"
                 "border-radius:8px;padding:1px 6px;font-size:13px'>"
-                "\"+dot+esc(p.username)+(p.you?' (You)':'')+\"</div>"
+                "\"+dot+\"<a href='/shelf/\"+encodeURIComponent("
+                "p.username)+\"'>\"+esc(p.username)+\"</a>\"+(p.you?"
+                "' (You)':'')+\"</div>"
                 "<div style='width:64px;height:8px;background:#ddd;"
                 "border-radius:4px;margin:2px auto'><div style='"
                 "width:\"+p.hp+\"%;height:8px;background:\"+(p.hp>30?"
@@ -4937,6 +4989,32 @@ class Handler(BaseHTTPRequestHandler):
                 "if(e.key==='ArrowDown'){move(0,6);}"
                 "if(e.key==='ArrowLeft'){move(-4,0);}"
                 "if(e.key==='ArrowRight'){move(4,0);}});"
+                "var fld=document.getElementById('field');"
+                "var lastGo=0;var lastTX=0;var lastTY=0;"
+                "function goTo(cx,cy,force){if(!ME||!POS){return;}"
+                "var r=fld.getBoundingClientRect();"
+                "POS.x=Math.max(0,Math.min(92,(cx-r.left)/r.width*100));"
+                "POS.y=Math.max(0,Math.min(85,(cy-r.top)/r.height*100));"
+                "lastTX=cx;lastTY=cy;var now=Date.now();"
+                "if(!force&&now-lastGo<400){return;}lastGo=now;"
+                "var f=new URLSearchParams();f.append('csrf_token',"
+                "CSRF);f.append('x',POS.x);f.append('y',POS.y);"
+                "fetch('/play_move',{method:'POST',body:f});poll();}"
+                "fld.addEventListener('touchstart',function(e){"
+                "if(e.target.closest('button')||e.target.closest("
+                "'#players')){return;}var t=e.touches[0];"
+                "goTo(t.clientX,t.clientY);e.preventDefault();},"
+                "{passive:false});"
+                "fld.addEventListener('touchmove',function(e){"
+                "if(e.target.closest('button')||e.target.closest("
+                "'#players')){return;}var t=e.touches[0];"
+                "goTo(t.clientX,t.clientY);e.preventDefault();},"
+                "{passive:false});"
+                "fld.addEventListener('touchend',function(e){"
+                "goTo(lastTX,lastTY,true);});"
+                "fld.addEventListener('click',function(e){"
+                "if(e.target.closest('button')||e.target.closest("
+                "'#players')){return;}goTo(e.clientX,e.clientY);});"
                 "var cf=document.getElementById('chatform');"
                 "if(cf){cf.addEventListener('submit',function(e){"
                 "e.preventDefault();var inp=document.getElementById"
@@ -4947,6 +5025,49 @@ class Handler(BaseHTTPRequestHandler):
                 "poll();setInterval(poll,2000);</script>"
                 "</body></html>")
         self.send_html(html)
+
+    def trading_room(self, con, user):
+        """The trading room: everyone can see who is trading right
+        now and what they have up, and signed-in players can make
+        offers right here (same offer form as the Trade Board)."""
+        rows = con.execute(
+            "SELECT babies.*, users.username AS owner FROM babies "
+            "JOIN users ON users.id = babies.owner_id WHERE "
+            "babies.for_trade=1 ORDER BY users.username, babies.id"
+            ).fetchall()
+        mine = []
+        if user:
+            mine = con.execute("SELECT * FROM babies WHERE owner_id=?",
+                               (user["id"],)).fetchall()
+        body = ("<p>Everyone who has babies up for trade right now. "
+                "Tap a baby to see it up close, or send an offer for "
+                "it here. You can also walk the Live World villages "
+                "and visit anyone's shelf.</p>")
+        if not rows:
+            body += "<p>Nobody has babies up for trade right now.</p>"
+        current = None
+        for b in rows:
+            if b["owner"] != current:
+                current = b["owner"]
+                body += ("<h2>%s is trading</h2>" % esc(current))
+            body += baby_card(b, b["owner"], show_owner=True)
+            if not user:
+                body += ("<p><a href='/login'>Log in</a> to make an "
+                         "offer.</p>")
+            else:
+                opts = "".join(
+                    "<option value='%d'>%s (%s)</option>"
+                    % (m["id"], esc(m["name"]), esc(m["cert"]))
+                    for m in mine)
+                body += ("""<form method='post' action='/offer'>
+                <input type='hidden' name='wanted_baby_id' value='%d'>
+                Your baby (optional): <select name='offered_baby_id'>
+                <option value=''>points only</option>%s</select><br>
+                Points to offer: <input type='number'
+                name='offered_points' value='0' min='0'><br>
+                <button>Send offer</button></form>"""
+                         % (b["id"], opts))
+        self.send_html(page("Trading Room", body, user))
 
     def do_shelf_add(self, con, user):
         if self.need_login(user):

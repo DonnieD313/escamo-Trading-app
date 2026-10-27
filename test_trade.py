@@ -7,6 +7,7 @@ Exits non-zero on any failed check.
 """
 import http.client
 import http.cookiejar
+import json
 import os
 import re
 import sqlite3
@@ -3124,6 +3125,35 @@ def main():
                   '"hp": 100' in state2
                   and "knocked out" in state2)
             pdb2.close()
+            # (o) Tribe villages, touch-to-move, trading room.
+            check("live page has touch controls, waddle and villages",
+                  "touchstart" in live and "waddle" in live
+                  and "Fortress Rooted village" in live
+                  and "zonelabel" in live)
+            vjar = http.cookiejar.CookieJar()
+            s, _ = signup_full(vjar, "villager", "secret9",
+                               tribe="Browns", base=pbase)
+            check("browns signup succeeds", s in (200, 302))
+            s, vstate = get(anon, "/play_state", base=pbase)
+            vplayers = {p["username"]: p
+                        for p in json.loads(vstate)["players"]}
+            check("fortress rooted player spawns in the woods band",
+                  "villager" in vplayers
+                  and vplayers["villager"]["y"] >= 66)
+            pdb3 = sqlite3.connect(pdb)
+            brow = pdb3.execute(
+                "SELECT babies.id, babies.name FROM babies JOIN users "
+                "ON users.id = babies.owner_id WHERE users.username="
+                "'shelfy' LIMIT 1").fetchone()
+            pdb3.close()
+            post(sh, "/toggle_trade", {"baby_id": str(brow[0])},
+                 base=pbase)
+            s, room = get(sh2, "/trading", base=pbase)
+            check("trading room shows who is trading and their baby",
+                  "shelfy is trading" in room and brow[1] in room
+                  and "Send offer" in room)
+            post(sh, "/toggle_trade", {"baby_id": str(brow[0])},
+                 base=pbase)
             pcongs.close()
             pcong4.close()
             pcong5.close()
