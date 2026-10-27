@@ -861,6 +861,16 @@ def init_db():
         text TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
+    # Play fights: health per player. No stakes — no points or
+    # babies are ever lost; a knockout just respawns you at full
+    # health, and health comes back on its own after a quiet minute.
+    con.execute("""
+    CREATE TABLE IF NOT EXISTS play_health (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id),
+        hp INTEGER NOT NULL DEFAULT 100,
+        last_damage_at TEXT,
+        last_hit_at TEXT
+    )""")
     # Migration for the tribe renames: rewrite old tribe names in the
     # Notices board so no user-facing page still shows them.
     for old, new in (("Blacks", "Shadows"),
@@ -2240,6 +2250,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.do_play_move(con, user)
             elif path == "/play_chat":
                 self.do_play_chat(con, user)
+            elif path == "/play_hit":
+                self.do_play_hit(con, user)
             elif path == "/recolor":
                 self.do_recolor(con, user)
             elif path == "/recruit":
@@ -4598,6 +4610,9 @@ class Handler(BaseHTTPRequestHandler):
                 + "</div></body></html>")
         self.send_html(html)
 
+    def _spawn(self, user_id):
+        return (20 + (user_id * 37 % 60), 30 + (user_id * 23 % 40))
+
     def _live_players(self, con, user):
         """Everyone with a baby, where they stand in the Live World,
         and their latest chat line (shown as a speech bubble for 2
@@ -4630,8 +4645,22 @@ class Handler(BaseHTTPRequestHandler):
             if pos:
                 x, y = pos["x"], pos["y"]
             else:
-                x = 20 + (p["id"] * 37 % 60)
-                y = 30 + (p["id"] * 23 % 40)
+                x, y = self._spawn(p["id"])
+            hrow = con.execute("SELECT * FROM play_health WHERE "
+                               "user_id=?", (p["id"],)).fetchone()
+            hp = hrow["hp"] if hrow else 100
+            if hp < 100 and hrow and hrow["last_damage_at"]:
+                try:
+                    hurt = datetime.datetime.strptime(
+                        hrow["last_damage_at"], "%Y-%m-%d %H:%M:%S")
+                    quiet = (datetime.datetime.utcnow() - hurt) > \
+                        datetime.timedelta(minutes=1)
+                except (ValueError, TypeError):
+                    quiet = False
+                if quiet:
+                    hp = 100
+                    con.execute("UPDATE play_health SET hp=100 WHERE "
+                                "user_id=?", (p["id"],))
             msg = con.execute("SELECT text, created_at FROM play_chat "
                               "WHERE user_id=? ORDER BY id DESC LIMIT 1",
                               (p["id"],)).fetchone()
@@ -4648,7 +4677,7 @@ class Handler(BaseHTTPRequestHandler):
                     bubble = msg["text"]
             out.append({"username": p["username"], "x": x, "y": y,
                         "avatar": baby_img_html(baby, 64) if baby else "",
-                        "online": online(p), "bubble": bubble,
+                        "online": online(p), "bubble": bubble, "hp": hp,
                         "you": bool(user and user["id"] == p["id"])})
         return out
 
@@ -4658,10 +4687,94 @@ class Handler(BaseHTTPRequestHandler):
             "users ON users.id = play_chat.user_id ORDER BY play_chat.id "
             "DESC LIMIT 20").fetchall()
         msgs.reverse()
+        players = self._live_players(con, user)
+        con.commit()
         self.send_json({
-            "players": self._live_players(con, user),
+            "players": players,
             "messages": [{"username": m["username"], "text": m["text"]}
                          for m in msgs]})
+
+    def do_play_hit(self, con, user):
+        """One playful hit on another player in the Live World.
+        You must be near them, they must be online, and your hits
+        are 2 seconds apart. 10 damage a hit; a knockout respawns
+        the loser at full health at their spawn point."""
+        if not user:
+            self.send_json({"ok": False, "error": "login required"},
+                           403)
+            return
+        target = con.execute("SELECT * FROM users WHERE username=?",
+                             (self.form().get("target") or "",)
+                             ).fetchone()
+        if not target:
+            self.send_json({"ok": False, "error": "no such player"},
+                           400)
+            return
+        if target["id"] == user["id"]:
+            self.send_json({"ok": False, "error": "self"}, 400)
+            return
+        raw = target["last_seen"]
+        try:
+            seen = datetime.datetime.strptime(raw, "%Y-%m-%d %H:%M:%S")
+            away = (datetime.datetime.utcnow() - seen) >= \
+                datetime.timedelta(minutes=5)
+        except (ValueError, TypeError):
+            away = True
+        if away:
+            self.send_json({"ok": False, "error": "away"}, 400)
+            return
+
+        def pos_of(uid):
+            row = con.execute("SELECT * FROM player_positions WHERE "
+                              "user_id=?", (uid,)).fetchone()
+            return (row["x"], row["y"]) if row else self._spawn(uid)
+
+        ax, ay = pos_of(user["id"])
+        tx, ty = pos_of(target["id"])
+        if abs(ax - tx) > 15 or abs(ay - ty) > 15:
+            self.send_json({"ok": False, "error": "too_far"}, 400)
+            return
+        now = datetime.datetime.utcnow()
+        mine = con.execute("SELECT * FROM play_health WHERE user_id=?",
+                           (user["id"],)).fetchone()
+        if mine and mine["last_hit_at"]:
+            try:
+                last = datetime.datetime.strptime(
+                    mine["last_hit_at"], "%Y-%m-%d %H:%M:%S")
+                if (now - last) < datetime.timedelta(seconds=2):
+                    self.send_json({"ok": False, "error": "too_fast"},
+                                   400)
+                    return
+            except (ValueError, TypeError):
+                pass
+        trow = con.execute("SELECT * FROM play_health WHERE user_id=?",
+                           (target["id"],)).fetchone()
+        hp = (trow["hp"] if trow else 100) - 10
+        ko = hp <= 0
+        if ko:
+            hp = 100
+            sx, sy = self._spawn(target["id"])
+            con.execute("INSERT INTO player_positions (user_id, x, y, "
+                        "updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)"
+                        " ON CONFLICT(user_id) DO UPDATE SET x=excluded.x,"
+                        " y=excluded.y, updated_at=CURRENT_TIMESTAMP",
+                        (target["id"], sx, sy))
+            con.execute("INSERT INTO play_chat (user_id, text) VALUES "
+                        "(?, ?)", (user["id"],
+                                    "💥 %s knocked out %s!"
+                                    % (user["username"],
+                                       target["username"])))
+        con.execute("INSERT INTO play_health (user_id, hp, "
+                    "last_damage_at) VALUES (?, ?, CURRENT_TIMESTAMP) "
+                    "ON CONFLICT(user_id) DO UPDATE SET hp=excluded.hp, "
+                    "last_damage_at=CURRENT_TIMESTAMP",
+                    (target["id"], hp))
+        con.execute("INSERT INTO play_health (user_id, last_hit_at) "
+                    "VALUES (?, CURRENT_TIMESTAMP) ON CONFLICT(user_id)"
+                    " DO UPDATE SET last_hit_at=CURRENT_TIMESTAMP",
+                    (user["id"],))
+        con.commit()
+        self.send_json({"ok": True, "hp": hp, "ko": ko})
 
     def do_play_move(self, con, user):
         if not user:
@@ -4757,14 +4870,15 @@ class Handler(BaseHTTPRequestHandler):
                 "<div id='chatlog' style='max-height:90px;"
                 "overflow:auto;background:rgba(255,255,255,0.7);"
                 "border-radius:10px;padding:6px;font-size:14px'>"
-                "</div></div>" + trees +
+                "</div><div id='fightmsg' style='font-size:14px;"
+                "min-height:18px'></div></div>" + trees +
                 "<div id='players'></div></div>" + controls +
                 "<script>var CSRF='" + esc(self._csrf_token or "") + "';"
                 "var ME=" + json.dumps(me) + ";var POS=null;"
                 "function esc(s){return s.replace(/&/g,'&amp;')"
                 ".replace(/</g,'&lt;');}"
-                "function render(st){var h='';"
-                "st.players.forEach(function(p){"
+                "function render(st){window._ST=st;var h='';"
+                "st.players.forEach(function(p,i){"
                 "if(p.you&&!POS){POS={x:p.x,y:p.y};}"
                 "var dot=p.online?\"<span style='color:green'>●"
                 "</span>\":\"<span style='color:#888'>●</span>\";"
@@ -4777,7 +4891,13 @@ class Handler(BaseHTTPRequestHandler):
                 "<div style='background:rgba(255,255,255,0.85);"
                 "border-radius:8px;padding:1px 6px;font-size:13px'>"
                 "\"+dot+esc(p.username)+(p.you?' (You)':'')+\"</div>"
-                "</div>\";});"
+                "<div style='width:64px;height:8px;background:#ddd;"
+                "border-radius:4px;margin:2px auto'><div style='"
+                "width:\"+p.hp+\"%;height:8px;background:\"+(p.hp>30?"
+                "\"green\":\"red\")+\";border-radius:4px'></div></div>"
+                "\"+(ME&&!p.you?\"<button onclick='hitIdx(\"+i+\")' "
+                "style='padding:4px 8px;font-size:14px'>🥊 Fight"
+                "</button>\":'')+\"</div>\";});"
                 "document.getElementById('players').innerHTML=h;"
                 "document.getElementById('chatlog').innerHTML="
                 "st.messages.map(function(m){return '<b>'+esc("
@@ -4790,6 +4910,21 @@ class Handler(BaseHTTPRequestHandler):
                 "var f=new URLSearchParams();f.append('csrf_token',"
                 "CSRF);f.append('x',POS.x);f.append('y',POS.y);"
                 "fetch('/play_move',{method:'POST',body:f});poll();}"
+                "function hitIdx(i){var p=window._ST.players[i];"
+                "if(!p){return;}"
+                "var f=new URLSearchParams();f.append('csrf_token',"
+                "CSRF);f.append('target',p.username);"
+                "fetch('/play_hit',{method:'POST',body:f}).then("
+                "function(r){return r.json();}).then(function(d){"
+                "var m=document.getElementById('fightmsg');"
+                "if(!d.ok){m.textContent=d.error==='too_far'?"
+                "'Walk closer first — you have to be near them to "
+                "fight!':d.error==='too_fast'?'Wait a second between "
+                "hits!':d.error==='away'?'They are away right now.'"
+                ":'Could not fight.';}"
+                "else{m.textContent=d.ko?('You knocked out '+"
+                "p.username+'!'):('You hit '+p.username+' — '+d.hp+"
+                "' health left.');}poll();});}"
                 "document.addEventListener('keydown',function(e){"
                 "if(document.activeElement&&document.activeElement"
                 ".id==='chatin'){return;}"

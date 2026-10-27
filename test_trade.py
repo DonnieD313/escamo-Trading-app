@@ -3069,6 +3069,58 @@ def main():
             s, refused = post(anon, "/play_move",
                               {"x": "10", "y": "10"}, base=pbase)
             check("logged-out move is refused", s == 403)
+            # (n) Play fights: walk up, hit, health, knockout.
+            check("live page carries the fight script",
+                  "hitIdx" in live and "🥊 Fight" in live)
+            post(sh, "/play_move", {"x": "50", "y": "50"}, base=pbase)
+            post(sh2, "/play_move", {"x": "52", "y": "52"},
+                 base=pbase)
+            s, hit = post(sh, "/play_hit", {"target": "shelfy2"},
+                          base=pbase)
+            check("nearby hit lands for 10 damage",
+                  s == 200 and '"hp": 90' in hit)
+            post(sh2, "/play_move", {"x": "90", "y": "90"},
+                 base=pbase)
+            s, far = post(sh, "/play_hit", {"target": "shelfy2"},
+                          base=pbase)
+            check("far-away hit is refused",
+                  s == 400 and "too_far" in far)
+            s, selfhit = post(sh, "/play_hit", {"target": "shelfy"},
+                              base=pbase)
+            check("hitting yourself is refused",
+                  s == 400 and "self" in selfhit)
+            s, anonhit = post(anon, "/play_hit", {"target": "shelfy2"},
+                              base=pbase)
+            check("logged-out hit is refused", s == 403)
+            pdb2 = sqlite3.connect(pdb)
+            pdb2.execute("UPDATE play_health SET last_hit_at="
+                         "'2000-01-01 00:00:00' WHERE user_id IN "
+                         "(SELECT id FROM users WHERE username="
+                         "'shelfy')")
+            pdb2.commit()
+            post(sh2, "/play_move", {"x": "52", "y": "52"},
+                 base=pbase)
+            s, hit2 = post(sh, "/play_hit", {"target": "shelfy2"},
+                           base=pbase)
+            check("second hit lands after cooldown reset",
+                  s == 200 and '"hp": 80' in hit2)
+            s, fast = post(sh, "/play_hit", {"target": "shelfy2"},
+                           base=pbase)
+            check("rapid repeat hit is refused",
+                  s == 400 and "too_fast" in fast)
+            for _ in range(8):
+                pdb2.execute("UPDATE play_health SET last_hit_at="
+                             "'2000-01-01 00:00:00' WHERE user_id IN "
+                             "(SELECT id FROM users WHERE username="
+                             "'shelfy')")
+                pdb2.commit()
+                post(sh, "/play_hit", {"target": "shelfy2"},
+                     base=pbase)
+            s, state2 = get(sh2, "/play_state", base=pbase)
+            check("knockout respawns at full health and is announced",
+                  '"hp": 100' in state2
+                  and "knocked out" in state2)
+            pdb2.close()
             pcongs.close()
             pcong4.close()
             pcong5.close()
