@@ -880,6 +880,31 @@ def init_db():
     )""")
     con.execute("INSERT OR IGNORE INTO play_dummy (id, hp) VALUES "
                 "(1, 100)")
+    # Field pickups: flowers, balls and butterflies lying in
+    # the Live World field for players to pick up with the Pick
+    # Up button. A picked item respawns elsewhere so the field
+    # never runs bare.
+    con.execute("""
+    CREATE TABLE IF NOT EXISTS field_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind TEXT NOT NULL,
+        x INTEGER NOT NULL,
+        y INTEGER NOT NULL
+    )""")
+    con.execute("""
+    CREATE TABLE IF NOT EXISTS carried_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        kind TEXT NOT NULL,
+        picked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )""")
+    if con.execute("SELECT COUNT(*) FROM field_items").fetchone()[0] == 0:
+        for kind, x, y in (("🌸", 20, 20), ("🌼", 70, 15),
+                           ("⚽", 45, 55), ("🦋", 80, 40),
+                           ("🌸", 30, 70), ("⚽", 60, 25),
+                           ("🌼", 15, 45), ("🦋", 55, 75)):
+            con.execute("INSERT INTO field_items (kind, x, y) "
+                        "VALUES (?, ?, ?)", (kind, x, y))
     # Migration for the tribe renames: rewrite old tribe names in the
     # Notices board so no user-facing page still shows them.
     for old, new in (("Blacks", "Shadows"),
@@ -1449,16 +1474,21 @@ def page(title, body, user=None):
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<title>%s</title><style>"
             "body{font-family:system-ui,sans-serif;max-width:640px;margin:0 auto;"
-            "padding:16px;line-height:1.5} nav{margin-bottom:16px}"
-            "input,select,button{font-size:16px;padding:8px;margin:4px 0}"
-            ".card{border:1px solid #ccc;border-radius:10px;padding:12px;"
-            "margin:10px 0} .tag{display:inline-block;background:#eef;"
-            "border-radius:6px;padding:2px 8px;margin-right:6px}"
-            ".ok{color:green} .err{color:red}"
-            ".theme-water{background:#eaf6ff;border-color:#7ec3e8}"
-            ".theme-woods{background:#eff5e6;border-color:#8fae6b}"
-            ".theme-sky{background:#eaf2ff;border-color:#9db8e8}"
-            ".theme-underground{background:#f1eff5;border-color:#6b5b7a}"
+            "padding:16px;line-height:1.5;background:#0d3b38;color:#fdf6e3}"
+            "a{color:#f0c75e} nav{margin-bottom:16px}"
+            "h1,h2,h3{color:#f0c75e}"
+            "input,select{font-size:16px;padding:8px;margin:4px 0}"
+            "button{font-size:16px;padding:8px;margin:4px 0;background:#d4af37;"
+            "color:#1a2e2c;font-weight:bold;border:2px solid #b8960c;border-radius:8px}"
+            ".card{border:2px solid #d4af37;border-radius:10px;padding:12px;"
+            "margin:10px 0;background:#155e57} .tag{display:inline-block;background:#f5e6b8;"
+            "color:#1a2e2c;border-radius:6px;padding:2px 8px;margin-right:6px}"
+            ".ok{color:#7dff7d} .err{color:#ff8a8a}"
+            ".theme-water{background:#eaf6ff;border-color:#7ec3e8;color:#222}"
+            ".theme-water a,.theme-woods a,.theme-sky a,.theme-underground a{color:#14532d}"
+            ".theme-woods{background:#eff5e6;border-color:#8fae6b;color:#222}"
+            ".theme-sky{background:#eaf2ff;border-color:#9db8e8;color:#222}"
+            ".theme-underground{background:#f1eff5;border-color:#6b5b7a;color:#222}"
             "</style></head><body><div id='popup-banner'></div>"
             "<script>fetch('/popup_banner').then(function(r){return "
             "r.json();}).then(function(d){if(!d.active){return;}"
@@ -1961,7 +1991,7 @@ def popup_shop_section(con, cert, heading, user):
     if (item["total"] or 1) > 1:
         stock_line = ("<br>Only %d of %d left in this edition"
                       % (item["stock"], item["total"]))
-    out = ("<h2>%s</h2><div class='card %s'><div style='text-align:center'>"
+    out = ("<h2>%s</h2><div class='card %s' style='border:3px solid #d4af37'><div style='text-align:center'>"
            "%s</div><b>%s</b> %s "
            "<span class='tag'>%s</span> "
            "<span class='tag'>%s</span><br>"
@@ -2283,6 +2313,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.do_play_chat(con, user)
             elif path == "/play_hit":
                 self.do_play_hit(con, user)
+            elif path == "/pickup":
+                self.do_pickup(con, user)
             elif path == "/recolor":
                 self.do_recolor(con, user)
             elif path == "/recruit":
@@ -4731,6 +4763,42 @@ class Handler(BaseHTTPRequestHandler):
                     "you": False, "dummy": True})
         return out
 
+    def do_pickup(self, con, user):
+        """Pick up the nearest field item within reach (15% on both
+        axes, the same reach as a punch). The item goes into your
+        carried pile and a fresh one of the same kind appears
+        elsewhere in the field."""
+        if not user:
+            self.send_json({"ok": False, "error": "login required"},
+                           403)
+            return
+        prow = con.execute("SELECT * FROM player_positions WHERE "
+                           "user_id=?", (user["id"],)).fetchone()
+        if prow:
+            px, py = prow["x"], prow["y"]
+        else:
+            px, py = self._spawn(user["id"], user_tribe(con, user))
+        best = None
+        for it in con.execute("SELECT * FROM field_items").fetchall():
+            if abs(it["x"] - px) <= 15 and abs(it["y"] - py) <= 15:
+                d = abs(it["x"] - px) + abs(it["y"] - py)
+                if best is None or d < best[0]:
+                    best = (d, it)
+        if not best:
+            self.send_json({"ok": False, "error": "too_far"}, 400)
+            return
+        it = best[1]
+        con.execute("DELETE FROM field_items WHERE id=?",
+                    (it["id"],))
+        con.execute("INSERT INTO carried_items (user_id, kind) "
+                    "VALUES (?, ?)", (user["id"], it["kind"]))
+        nx = (it["id"] * 37 + 11) % 83 + 8
+        ny = (it["id"] * 53 + 29) % 70 + 8
+        con.execute("INSERT INTO field_items (kind, x, y) "
+                    "VALUES (?, ?, ?)", (it["kind"], nx, ny))
+        con.commit()
+        self.send_json({"ok": True, "kind": it["kind"]})
+
     def play_state(self, con, user):
         msgs = con.execute(
             "SELECT play_chat.text, users.username FROM play_chat JOIN "
@@ -4739,8 +4807,18 @@ class Handler(BaseHTTPRequestHandler):
         msgs.reverse()
         players = self._live_players(con, user)
         con.commit()
+        items = con.execute(
+            "SELECT kind, x, y FROM field_items").fetchall()
+        carried = []
+        if user:
+            carried = [r["kind"] for r in con.execute(
+                "SELECT kind FROM carried_items WHERE user_id=? "
+                "ORDER BY id", (user["id"],)).fetchall()]
         self.send_json({
             "players": players,
+            "items": [{"kind": it["kind"], "x": it["x"],
+                      "y": it["y"]} for it in items],
+            "carried": carried,
             "messages": [{"username": m["username"], "text": m["text"]}
                          for m in msgs]})
 
@@ -4912,10 +4990,19 @@ class Handler(BaseHTTPRequestHandler):
         controls = ""
         if user:
             controls = (
-                "<div style='background:#ffe9a8;padding:8px;"
-                "box-sizing:border-box;border-top:4px solid #e67e22'>"
+                "<div style='background:#14524d;padding:8px;"
+                "box-sizing:border-box;border-top:4px solid #d4af37'>"
                 "<div id='fightmsg' style='font-size:14px;"
-                "min-height:18px;text-align:center'></div>"
+                "min-height:18px;text-align:center;color:#fdf6e3'></div>"
+                "<div style='text-align:center;display:flex;'"
+                "gap:8px;justify-content:center;flex-wrap:wrap'>"
+                "<button onclick='punchNearest()' "
+                "style='padding:10px 18px;font-size:18px'>🥊 Punch"
+                "</button><button onclick='pickup()' "
+                "style='padding:10px 18px;font-size:18px'>✋ Pick up"
+                "</button><span id='carried' "
+                "style='font-size:20px;align-self:center;color:#fdf6e3'"
+                "></span></div>"
                 "<form id='chatform' style='display:flex;gap:6px;"
                 "margin-top:6px'><input id='chatin' maxlength='200' "
                 "placeholder='Say something to the village…' "
@@ -4923,8 +5010,8 @@ class Handler(BaseHTTPRequestHandler):
                 "<button>Send</button></form></div>")
         else:
             controls = (
-                "<div style='background:#ffe9a8;padding:10px;"
-                "border-top:4px solid #e67e22;"
+                "<div style='background:#14524d;padding:10px;color:#fdf6e3;"
+                "border-top:4px solid #d4af37;"
                 "text-align:center'><a href='/login'>Log in</a> or "
                 "<a href='/signup'>sign up</a> to walk around and "
                 "chat — you can watch everyone else meanwhile.</div>")
@@ -4948,8 +5035,13 @@ class Handler(BaseHTTPRequestHandler):
                 "system-ui,sans-serif} body{display:flex;"
                 "flex-direction:column;height:100vh;height:100dvh;"
                 "overflow:hidden} button{padding:10px 14px;"
-                "font-size:18px} a{color:#14532d} "
-                ".walking{animation:bob .5s ease-in-out infinite alternate} "
+                "font-size:18px} a{color:#f0c75e} "
+                "@keyframes robostep{from{transform:rotate(-22deg)}"
+                "to{transform:rotate(22deg)}} "
+                ".walking .leg-l{animation:robostep .4s "
+                "steps(2,end) infinite alternate} "
+                ".walking .leg-r{animation:robostep .4s "
+                "steps(2,end) infinite alternate-reverse} "
                 ".idle{animation:bob 1.6s ease-in-out infinite alternate} "
                 "@keyframes bob{from{transform:translate(-50%,-50%)}"
                 "to{transform:translate(-50%,-54%)}} "
@@ -4962,14 +5054,15 @@ class Handler(BaseHTTPRequestHandler):
                 "scale(1.18)}} "
                 ".lunging{animation:lunge .4s} "
                 "button{border:3px solid #333;border-radius:14px;"
-                "background:#fff;box-shadow:2px 2px 0 #333}</style>"
+                "background:#d4af37;box-shadow:2px 2px 0 #333}</style>"
                 "</head><body>"
                 "<div id='popup-banner'></div>"
                 "<div style='padding:6px 10px;display:flex;"
                 "flex-wrap:wrap;gap:8px;align-items:center;"
-                "justify-content:space-between;background:#ffcf3f;"
-                "border-bottom:4px solid #e67e22'><b>🌍 Live World</b>"
-                "<span id='zonelabel' style='font-size:13px'></span>"
+                "justify-content:space-between;background:#0d3b38;"
+                "border-bottom:4px solid #d4af37'><b "
+                "style='color:#f0c75e'>🌍 Live World</b>"
+                "<span id='zonelabel' style='font-size:13px;color:#f0c75e'></span>"
                 "<span style='font-size:13px'>"
                 "<a href='/play'>Play scene</a> | "
                 "<a href='/trading'>Trading Room</a> | "
@@ -4995,7 +5088,7 @@ class Handler(BaseHTTPRequestHandler):
                 "font-size:13px;background:rgba(255,255,255,0.7);"
                 "border-radius:8px;padding:1px 6px'>🌲 Fortress "
                 "Rooted village</div>" + clouds + trees +
-                "<div id='players'></div></div>"
+                "<div id='players'></div><div id='items'></div></div>"
                 "<div id='chatlog' style='max-height:64px;"
                 "overflow:auto;padding:6px 10px;font-size:13px;"
                 "background:#f5f5f5;border-top:1px solid #ccc'>"
@@ -5004,6 +5097,7 @@ class Handler(BaseHTTPRequestHandler):
                 "var ME=" + json.dumps(me) + ";var POS=null;"
                 "function esc(s){return s.replace(/&/g,'&amp;')"
                 ".replace(/</g,'&lt;');}"
+                "function robotHTML(p){var c={Blues:'#2b5ea7',Browns:'#7a4a21',Reds:'#c0392b',Dummy:'#888'}[p.tribe]||'#2b5ea7';if(p.dummy){return \"<div style='font-size:60px;line-height:1'>🎯</div>\";}var tmp=document.createElement('div');tmp.innerHTML=p.avatar;var im=tmp.querySelector('img');var src=im?im.getAttribute('src'):'';var head=src?\"<img src='\"+src+\"' style='width:54px;height:54px;object-fit:cover;object-position:50% 22%;border:3px solid \"+c+\";border-radius:8px;display:block;margin:0 auto'>\":\"<div style='width:54px;height:54px;background:\"+c+\";border-radius:8px;margin:0 auto;font-size:30px;line-height:54px'>🧸</div>\";return \"<div style='width:76px;margin:0 auto'>\"+head+\"<div style='width:52px;height:40px;background:\"+c+\";border:3px solid #333;border-radius:6px;margin:2px auto 0;position:relative'><span style='position:absolute;left:8px;top:8px;color:#ffd700'>✦</span><span style='position:absolute;left:22px;top:15px;color:#ffd700'>✦</span><span style='position:absolute;left:34px;top:6px;color:#ffd700'>✦</span><span style='position:absolute;left:-13px;top:4px;width:10px;height:28px;background:#333;border-radius:3px'></span><span style='position:absolute;right:-13px;top:4px;width:10px;height:28px;background:#333;border-radius:3px'></span></div><div style='display:flex;justify-content:center;gap:14px'><div class='leg leg-l' style='width:13px;height:22px;background:#333;border-radius:3px'></div><div class='leg leg-r' style='width:13px;height:22px;background:#333;border-radius:3px'></div></div></div>\";}"
 "function render(st){window._ST=st;var h='';"
                 "st.players.forEach(function(p,i){"
                 "if(p.you&&!POS){POS={x:p.x,y:p.y};}"
@@ -5021,10 +5115,10 @@ class Handler(BaseHTTPRequestHandler):
                 "border-radius:10px;padding:4px 8px;font-size:13px;"
                 "max-width:160px'>\"+esc(p.bubble)+\"</div>\":'';"
                 'h+="<div "+(p.you?"id=\'me-ava\' ":"")+"class=\'"+((moved?"walking":"idle")+(p.username===window._SHAKE?" shaking":"")+(p.username===window._LUNGE?" lunging":""))+"\' '
-                "style='position:absolute;transition:left .6s linear,"
-                "top .6s linear;left:\"+p.x+\"%;"
+                "style='position:absolute;transition:left .6s steps(4),"
+                "top .6s steps(4);left:\"+p.x+\"%;"
                 "top:\"+p.y+\"%;transform:translate(-50%,-50%);"
-                "text-align:center'>\"+(p.username===window._BURST?\"<div style='font-size:28px'>💥</div>\":'')+bub+\"<div>\"+p.avatar+\"</div>"
+                "text-align:center'>\"+(p.username===window._BURST?\"<div style='font-size:28px'>💥</div>\":'')+bub+\"<div>\"+robotHTML(p)+\"</div>"
                 "<div style='background:rgba(255,255,255,0.85);"
                 "border-radius:8px;padding:1px 6px;font-size:13px'>"
                 "\"+dot+\"<a href='/shelf/\"+encodeURIComponent("
@@ -5039,6 +5133,13 @@ class Handler(BaseHTTPRequestHandler):
                 "</button>\":'')+\"</div>\";});"
                 "window._SHAKE=null;window._LUNGE=null;window._BURST=null;"
                 "document.getElementById('players').innerHTML=h;"
+                "document.getElementById('items').innerHTML="
+                "(st.items||[]).map(function(it){return \"<div "
+                "style='position:absolute;left:\"+it.x+\"%;top:\"+it.y+"
+                "\"%;transform:translate(-50%,-50%);font-size:30px'>\""
+                "+it.kind+\"</div>\";}).join('');"
+                "var cd=document.getElementById('carried');"
+                "if(cd){cd.textContent='🎒 '+(st.carried||[]).join(' ');}"
                 "document.getElementById('chatlog').innerHTML="
                 "st.messages.map(function(m){return '<b>'+esc("
                 "m.username)+':</b> '+esc(m.text);}).join('<br>');}"
@@ -5065,6 +5166,8 @@ class Handler(BaseHTTPRequestHandler):
                 "else{m.textContent=d.ko?('You knocked out '+"
                 "p.username+'!'):('You hit '+p.username+' — '+d.hp+"
                 "' health left.');window._SHAKE=p.username;window._LUNGE=ME;window._BURST=p.username;}poll();});}"
+                "function punchNearest(){if(!ME||!POS){return;}var best=-1;var bd=1e9;window._ST.players.forEach(function(p,i){if(p.you){return;}var dx=Math.abs(p.x-POS.x);var dy=Math.abs(p.y-POS.y);if(dx<=15&&dy<=15&&dx+dy<bd){bd=dx+dy;best=i;}});if(best<0){var m=document.getElementById('fightmsg');m.textContent='Nobody close enough to punch — walk up to someone or the practice dummy.';return;}hitIdx(best);}"
+                "function pickup(){if(!ME){return;}var f=new URLSearchParams();f.append('csrf_token',CSRF);fetch('/pickup',{method:'POST',body:f}).then(function(r){return r.json();}).then(function(d){var m=document.getElementById('fightmsg');if(!d.ok){m.textContent='Nothing close enough to pick up — walk up to a flower, ball, or butterfly.';}else{m.textContent='You picked up '+d.kind+'!';}poll();});}"
                 "document.addEventListener('keydown',function(e){"
                 "if(document.activeElement&&document.activeElement"
                 ".id==='chatin'){return;}"
@@ -5134,7 +5237,7 @@ class Handler(BaseHTTPRequestHandler):
                      "overflow-x:auto;padding:8px 8px 0;"
                      "align-items:flex-end'>")
             for b in rows:
-                shelf += ("<div style='flex:0 0 170px;text-align:center'>"
+                shelf += ("<div style='flex:0 0 170px;text-align:center;border:3px solid #d4af37;border-radius:10px;padding:8px;background:#155e57'>"
                           "<a href='/trading?want=%d'>%s</a><br>"
                           "<b>%s</b><br>%s is trading<br>"
                           "<a href='/baby/%s'>View baby</a></div>"
@@ -5142,7 +5245,7 @@ class Handler(BaseHTTPRequestHandler):
                              esc(b["name"]), esc(b["owner"]),
                              esc(b["cert"])))
             shelf += ("</div><div style='height:14px;background:"
-                      "#8b5a2b;border-radius:6px;margin:0 4px 20px'>"
+                      "#d4af37;border:3px solid #8a6d1b;border-radius:6px;margin:0 4px 20px'>"
                       "</div>")
             body += shelf
         want = (query.get("want") or [None])[0]

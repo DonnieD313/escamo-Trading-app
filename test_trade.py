@@ -3179,12 +3179,41 @@ def main():
             s, liveb = get(anon, "/live", base=pbase)
             check("live world carries the popup banner slot",
                   "popup-banner" in liveb)
-            # (q) Realistic photo babies, practice dummy battles.
-            check("live page uses photo babies, no stick figures",
-                  "walkerSVG" not in liveb and "p.avatar" in liveb
-                  and "me-ava" in liveb)
+            # (q) Robot babies with photo faces, punch + pick up.
+            check("live page builds blocky robots with photo faces",
+                  "walkerSVG" not in liveb and "robotHTML" in liveb
+                  and "leg leg-l" in liveb and "robostep" in liveb
+                  and "p.avatar" in liveb and "me-ava" in liveb)
             check("live page has no arrow buttons",
                   "⬆️" not in liveb and "⬇️" not in liveb)
+            s, live_signed = get(sh, "/live", base=pbase)
+            check("live page has punch and pick up buttons",
+                  "punchNearest" in live_signed
+                  and "🥊 Punch" in live_signed
+                  and "pickup()" in live_signed
+                  and "✋ Pick up" in live_signed)
+            check("live page uses promo teal and gold",
+                  "#0d3b38" in liveb and "#d4af37" in liveb)
+            check("trading shelf uses promo teal and gold",
+                  "#d4af37" in room and "#155e57" in room)
+            s, pick_state = get(anon, "/play_state", base=pbase)
+            pick_items = json.loads(pick_state)["items"]
+            check("live state carries field items to pick up",
+                  len(pick_items) > 0
+                  and any(i["kind"] == "🌸" for i in pick_items))
+            post(sh, "/play_move", {"x": "20", "y": "20"}, base=pbase)
+            s, picked = post(sh, "/pickup", {}, base=pbase)
+            check("pickup near a flower succeeds",
+                  s == 200 and json.loads(picked).get("kind") == "🌸")
+            s, carried_state = get(sh, "/play_state", base=pbase)
+            check("carried pile shows the picked flower",
+                  "🌸" in json.loads(carried_state)["carried"])
+            post(sh, "/play_move", {"x": "90", "y": "10"}, base=pbase)
+            s, farpick = post(sh, "/pickup", {}, base=pbase)
+            check("far-away pickup is refused",
+                  s == 400 and "too_far" in farpick)
+            s, anonpick = post(anon, "/pickup", {}, base=pbase)
+            check("logged-out pickup is refused", s == 403)
             s, dstate = get(anon, "/play_state", base=pbase)
             dplayers = {p["username"]: p
                         for p in json.loads(dstate)["players"]}
