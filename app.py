@@ -4877,39 +4877,58 @@ class Handler(BaseHTTPRequestHandler):
                 "text-align:center'><a href='/login'>Log in</a> or "
                 "<a href='/signup'>sign up</a> to walk around and "
                 "chat — you can watch everyone else meanwhile.</div>")
-        def blocky_tree(lx, ty):
+        def planter_tree(lx, ty):
             return ("<div style='position:absolute;left:%d%%;top:%d%%;"
                     "width:44px;margin-left:-22px;text-align:center'"
                     " aria-hidden='true'>"
-                    "<div style='width:34px;height:28px;background:#1e7a34;"
+                    "<div style='width:34px;height:24px;background:#1e7a34;"
                     "border:3px solid #14532d;border-radius:4px;margin:0 auto'></div>"
-                    "<div style='width:10px;height:18px;background:#7a4a21;"
-                    "margin:0 auto'></div></div>" % (lx, ty))
-        trees = "".join(blocky_tree(lx, ty) for lx, ty in
-                         [(4, 15), (88, 12), (12, 70), (82, 65), (48, 18),
-                          (24, 40), (68, 80), (90, 38)])
-        rivers = ("<div style='position:absolute;left:0;right:0;top:30%;"
-                  "height:22px;background:#3b82f6;border-top:3px solid #1d4ed8;"
-                  "border-bottom:3px solid #1d4ed8'></div>"
-                  "<div style='position:absolute;left:0;right:0;top:64%;"
-                  "height:22px;background:#3b82f6;border-top:3px solid #1d4ed8;"
-                  "border-bottom:3px solid #1d4ed8'></div>")
-        def blocky_hut(lx, ty):
+                    "<div style='width:40px;height:14px;background:#7a4a21;"
+                    "border:3px solid #5b3a1a;margin:0 auto'></div></div>"
+                    % (lx, ty))
+        trees = "".join(planter_tree(lx, ty) for lx, ty in
+                         [(6, 45), (92, 45), (20, 60), (80, 62),
+                          (50, 88), (12, 82), (88, 82), (38, 52)])
+        def shop_block(lx, color, name):
+            return ("<div style='position:absolute;left:%d%%;top:2%%;"
+                    "width:21%%;height:20%%;background:%s;"
+                    "border:3px solid #555;text-align:center'"
+                    " aria-hidden='true'>"
+                    "<div style='background:#d4af37;color:#222;"
+                    "font-size:11px;font-weight:bold;padding:2px'>%s</div>"
+                    "<div style='display:flex;justify-content:space-around;"
+                    "margin-top:8px'><div style='width:22%%;height:30px;"
+                    "background:#223'></div><div style='width:22%%;height:30px;"
+                    "background:#223'></div></div></div>"
+                    % (lx, color, name))
+        town = ("<div style='position:absolute;left:0;right:0;top:28%;"
+                "height:7%;background:#3a3a3a'></div>"
+                "<div style='position:absolute;left:0;right:0;top:31%;"
+                "border-top:3px dashed #f0c75e'></div>"
+                + "".join(shop_block(lx, color, name) for lx, color, name in
+                           [(2, "#e8e8e8", "Hoodie Shop"),
+                            (27, "#d4d4d4", "Trading Post"),
+                            (52, "#f0e6d2", "Snack Stop"),
+                            (77, "#dbe7f0", "Baby Boutique")]))
+        def blocky_house(lx, ty, color):
             return ("<div style='position:absolute;left:%d%%;top:%d%%;"
                     "width:88px;margin-left:-44px;margin-top:-51px;text-align:center;z-index:5'"
                     " aria-hidden='true'>"
                     "<div style='width:0;height:0;border-left:44px solid transparent;"
                     "border-right:44px solid transparent;border-bottom:34px solid #b45309;"
                     "margin:0 auto'></div>"
-                    "<div style='width:76px;height:52px;background:#d9a066;"
+                    "<div style='width:76px;height:52px;background:%s;"
                     "border:3px solid #7a4a21;margin:0 auto;position:relative'>"
                     "<div style='width:22px;height:34px;background:#5b3a1a;"
-                    "position:absolute;left:27px;bottom:0'></div></div>"
+                    "position:absolute;left:27px;bottom:0'></div>"
+                    "<div style='width:18px;height:18px;background:#bfe3ff;"
+                    "border:2px solid #7a4a21;position:absolute;right:6px;top:8px'></div></div>"
                     "<div style='font-size:11px;background:rgba(255,255,255,0.8);"
                     "border-radius:6px;padding:0 4px;display:inline-block'>hide here</div></div>"
-                    % (lx, ty))
-        huts = "".join(blocky_hut(lx, ty) for lx, ty in
-                        [(25, 22), (70, 50), (42, 78)])
+                    % (lx, ty, color))
+        houses = "".join(blocky_house(lx, ty, color) for lx, ty, color in
+                          [(25, 48, "#f0d9a0"), (70, 70, "#cfe3f5"),
+                           (42, 88, "#f5c6c6")])
         clouds = "".join(
             "<span style='position:absolute;left:%d%%;top:%d%%;'"
             "font-size:40px' aria-hidden='true'>☁️</span>"
@@ -4963,25 +4982,27 @@ class Handler(BaseHTTPRequestHandler):
                 "<a href='/me'>My Collection</a></span></div>"
                 "<div id='field' style='position:relative;flex:1;"
                 "min-height:0;overflow:hidden;touch-action:none;"
-                "background:linear-gradient(#0d3b38 0 30%,#155e57 "
-                "30%);'>"
+                "background:#c9c9c9'>"
+                "<div id='world' style='position:absolute;width:200%;"
+                "height:200%;left:-50%;top:-50%;transition:left .6s linear,"
+                "top .6s linear'>"
                 "<div style='position:absolute;left:0;right:0;top:33%;"
                 "border-top:2px dashed rgba(240,199,94,0.6)'></div>"
                 "<div style='position:absolute;left:0;right:0;top:66%;"
                 "border-top:2px dashed rgba(240,199,94,0.6)'></div>"
-                "<div style='position:absolute;left:8px;top:4px;"
+                "<div style='position:absolute;left:2%;top:24%;"
                 "font-size:13px;background:#0d3b38;color:#f0c75e;"
                 "border-radius:8px;padding:1px 6px'>☁️ Windyworrors "
                 "village</div>"
-                "<div style='position:absolute;left:8px;top:36%;"
+                "<div style='position:absolute;left:2%;top:38%;"
                 "font-size:13px;background:#0d3b38;color:#f0c75e;"
                 "border-radius:8px;padding:1px 6px'>🌊 "
                 "Waterliewaveminans village</div>"
-                "<div style='position:absolute;left:8px;top:69%;"
+                "<div style='position:absolute;left:2%;top:70%;"
                 "font-size:13px;background:#0d3b38;color:#f0c75e;"
                 "border-radius:8px;padding:1px 6px'>🌲 Fortress "
-                "Rooted village</div>" + clouds + trees + rivers +
-                "<div id='players'></div><div id='items'></div>" + huts + "</div>"
+                "Rooted village</div>" + town + trees +
+                "<div id='players'></div><div id='items'></div>" + houses + "</div></div>"
                 "<div id='chatlog' style='max-height:64px;"
                 "overflow:auto;padding:6px 10px;font-size:13px;"
                 "background:#0d3b38;border-top:4px solid #d4af37;color:#fdf6e3'>"
@@ -4990,7 +5011,7 @@ class Handler(BaseHTTPRequestHandler):
                 "var ME=" + json.dumps(me) + ";var POS=null;"
                 "function esc(s){return s.replace(/&/g,'&amp;')"
                 ".replace(/</g,'&lt;');}"
-                "function robotHTML(p){var c={Blues:'#2b5ea7',Browns:'#7a4a21',Reds:'#c0392b'}[p.tribe]||'#2b5ea7';var tmp=document.createElement('div');tmp.innerHTML=p.avatar;var im=tmp.querySelector('img');var src=im?im.getAttribute('src'):'';var antenna=\"<div style='width:5px;height:10px;background:#333;margin:0 auto'></div><div style='width:10px;height:10px;background:#ffd700;border:2px solid #333;border-radius:50%;margin:0 auto'></div>\";var head=src?\"<img src='\"+src+\"' style='width:44px;height:44px;object-fit:cover;object-position:50% 22%;border:3px solid \"+c+\";border-radius:2px;display:block;margin:0 auto'>\":\"<div style='width:44px;height:44px;background:\"+c+\";border:3px solid #333;border-radius:2px;margin:0 auto;font-size:24px;line-height:44px'>🧸</div>\";return \"<div style='width:52px;margin:0 auto'>\"+antenna+head+\"<div style='width:38px;height:28px;background:\"+c+\";border:3px solid #333;border-radius:6px;margin:2px auto 0;position:relative'><span style='position:absolute;left:5px;top:6px;color:#ffd700'>✦</span><span style='position:absolute;left:15px;top:11px;color:#ffd700'>✦</span><span style='position:absolute;left:25px;top:4px;color:#ffd700'>✦</span><span class='arm arm-l' style='position:absolute;left:-10px;top:3px;width:8px;height:20px;background:#333;border-radius:3px'></span><span class='arm arm-r' style='position:absolute;right:-10px;top:3px;width:8px;height:20px;background:#333;border-radius:3px'></span></div><div style='display:flex;justify-content:center;gap:8px'><div class='leg leg-l' style='width:10px;height:16px;background:#333;border-radius:3px'></div><div class='leg leg-r' style='width:10px;height:16px;background:#333;border-radius:3px'></div></div></div>\";}"
+                "function robotHTML(p){var c={Blues:'#2b5ea7',Browns:'#7a4a21',Reds:'#c0392b'}[p.tribe]||'#2b5ea7';var tmp=document.createElement('div');tmp.innerHTML=p.avatar;var im=tmp.querySelector('img');var src=im?im.getAttribute('src'):'';var head=src?\"<img src='\"+src+\"' style='width:46px;height:46px;object-fit:cover;object-position:50% 22%;border:3px solid \"+c+\";border-radius:2px;display:block;margin:0 auto'>\":\"<div style='width:46px;height:46px;background:\"+c+\";border:3px solid #333;border-radius:2px;margin:0 auto;font-size:24px;line-height:46px'>🧸</div>\";return \"<div style='width:64px;margin:0 auto'>\"+head+\"<div style='width:56px;height:36px;background:\"+c+\";border:3px solid #333;border-radius:4px;margin:2px auto 0;position:relative'><span style='position:absolute;left:8px;top:8px;color:#ffd700'>✦</span><span style='position:absolute;left:22px;top:14px;color:#ffd700'>✦</span><span style='position:absolute;left:36px;top:6px;color:#ffd700'>✦</span><span class='arm arm-l' style='position:absolute;left:-14px;top:2px;width:12px;height:30px;background:#333;border-radius:3px'></span><span class='arm arm-r' style='position:absolute;right:-14px;top:2px;width:12px;height:30px;background:#333;border-radius:3px'></span></div><div style='display:flex;justify-content:center;gap:6px'><div class='leg leg-l' style='width:14px;height:20px;background:#333;border-radius:3px'></div><div class='leg leg-r' style='width:14px;height:20px;background:#333;border-radius:3px'></div></div></div>\";}"
 "function render(st){window._ST=st;var h='';"
                 "st.players.forEach(function(p,i){"
                 "if(p.you&&!POS){POS={x:p.x,y:p.y};}"
@@ -5019,6 +5040,7 @@ class Handler(BaseHTTPRequestHandler):
                 "document.getElementById('chatlog').innerHTML="
                 "st.messages.map(function(m){return '<b>'+esc("
                 "m.username)+':</b> '+esc(m.text);}).join('<br>');}"
+                "var mep=(st.players||[]).filter(function(p){return p.you;})[0];var mx=mep?mep.x:50;var my=mep?mep.y:50;var cx=Math.max(-100,Math.min(0,50-2*mx));var cy=Math.max(-100,Math.min(0,50-2*my));var w=document.getElementById('world');if(w){w.style.left=cx+'%';w.style.top=cy+'%';}window._CAMX=cx;window._CAMY=cy;"
                 "function poll(){fetch('/play_state').then(function(r)"
                 "{return r.json();}).then(render);}"
                 "function move(dx,dy){if(!ME||!POS){return;}"
@@ -5042,8 +5064,10 @@ class Handler(BaseHTTPRequestHandler):
                 "var lastGo=0;var lastTX=0;var lastTY=0;"
                 "function goTo(cx,cy,force){if(!ME||!POS){return;}"
                 "var r=fld.getBoundingClientRect();"
-                "POS.x=Math.max(0,Math.min(92,(cx-r.left)/r.width*100));"
-                "POS.y=Math.max(0,Math.min(85,(cy-r.top)/r.height*100));"
+                "var px=(cx-r.left)/r.width*100;var py=(cy-r.top)/r.height*100;"
+                "var wx=(px-(window._CAMX||-50))/2;var wy=(py-(window._CAMY||-50))/2;"
+                "POS.x=Math.max(0,Math.min(92,wx));"
+                "POS.y=Math.max(0,Math.min(85,wy));"
                 "lastTX=cx;lastTY=cy;var now=Date.now();var me=document.getElementById('me-ava');if(me){me.style.left=POS.x+'%';me.style.top=POS.y+'%';}"
                 "if(!force&&now-lastGo<400){return;}lastGo=now;"
                 "var f=new URLSearchParams();f.append('csrf_token',"

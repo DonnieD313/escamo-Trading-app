@@ -3152,18 +3152,20 @@ def main():
             check("live world carries the popup banner slot",
                   "popup-banner" in liveb)
             # (q) Robot babies with photo faces, punch + pick up.
-            check("live page builds small blocky robots with photo faces",
+            check("live page builds blocky figures with photo faces",
                   "walkerSVG" not in liveb and "robotHTML" in liveb
                   and "leg leg-l" in liveb and "arm arm-l" in liveb
-                  and "antenna" in liveb and "robostep" in liveb
+                  and "antenna" not in liveb and "robostep" in liveb
                   and "p.avatar" in liveb and "me-ava" in liveb
-                  and "44px;height:44px" in liveb
-                  and "64px;height:64px" not in liveb)
-            check("fight grounds have blocky trees, rivers and huts",
-                  "#1e7a34" in liveb and "#3b82f6" in liveb
+                  and "46px;height:46px" in liveb
+                  and "width:56px;height:36px" in liveb)
+            check("town world has shops, street, planters and houses",
+                  "#1e7a34" in liveb and "#3a3a3a" in liveb
                   and "hide here" in liveb
                   and "butterfly" not in liveb
-                  and "linear-gradient(#0d3b38 0 30%,#155e57 30%)" in liveb)
+                  and "Hoodie Shop" in liveb and "Trading Post" in liveb
+                  and "id='world'" in liveb and "_CAMX" in liveb
+                  and "linear-gradient(#0d3b38 0 30%,#155e57 30%)" not in liveb)
             check("taps on characters are no longer ignored",
                   "closest('#players')" not in liveb)
             check("live page has no arrow buttons",
