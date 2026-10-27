@@ -3183,6 +3183,8 @@ def main():
             check("live page uses photo babies, no stick figures",
                   "walkerSVG" not in liveb and "p.avatar" in liveb
                   and "me-ava" in liveb)
+            check("live page has no arrow buttons",
+                  "⬆️" not in liveb and "⬇️" not in liveb)
             s, dstate = get(anon, "/play_state", base=pbase)
             dplayers = {p["username"]: p
                         for p in json.loads(dstate)["players"]}
