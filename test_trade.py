@@ -3708,6 +3708,23 @@ def main():
                   vimg_status == 200 and len(vimg_bytes) > 10000)
             check("villain cannot be bought in the coin shop",
                   "Snatcher" not in anonshop)
+            s, live = get(anon, "/live", base=pbase)
+            check("live field has a music button and looping audio",
+                  "bgmbtn" in live and "village-theme.mp3" in live
+                  and "toggleBgm" in live)
+            areq = urllib.request.Request(
+                pbase + "/audio/village-theme.mp3")
+            with urllib.request.urlopen(areq) as r:
+                astatus, abody = r.status, r.read()
+                act = r.headers.get("Content-Type")
+            check("theme audio is served as mp3",
+                  astatus == 200 and act == "audio/mpeg"
+                  and len(abody) > 10000)
+            try:
+                s, bad = get(anon, "/audio/BAD.mp3", base=pbase)
+            except urllib.error.HTTPError as e:
+                s = e.code
+            check("audio route refuses bad filenames", s == 404)
             s, dstate = get(anon, "/play_state", base=pbase)
             dplayers = {p["username"]: p
                         for p in json.loads(dstate)["players"]}

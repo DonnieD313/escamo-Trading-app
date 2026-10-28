@@ -43,6 +43,7 @@ HOST = os.environ.get("HOST", "127.0.0.1")
 # served at /img/<file>.jpg; the SVG portrait engine stays as the
 # fallback for every baby without a photo.
 IMG_DIR = os.path.join(BASE, "img")
+AUDIO_DIR = os.path.join(BASE, "audio")
 REALISTIC_IMAGES = {
     "Harbor": "harbor.jpg", "Lagoon": "lagoon.jpg",
     "Reef": "reef.jpg", "Drift": "drift.jpg",
@@ -2366,6 +2367,26 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def serve_audio(self, name):
+        # Game music lives in audio/ next to app.py. Same safety rule
+        # as images: plain lowercase filenames only, no path escapes.
+        if not re.fullmatch(r"[a-z0-9-]+\.mp3", name or ""):
+            self.send_html(page("Not found", "<p>Unknown audio.</p>",
+                                None), 404)
+            return
+        full = os.path.join(AUDIO_DIR, name)
+        if not os.path.isfile(full):
+            self.send_html(page("Not found", "<p>Unknown audio.</p>",
+                                None), 404)
+            return
+        with open(full, "rb") as f:
+            data = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", "audio/mpeg")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def redirect(self, path):
         self.send_response(302)
         self.send_header("Location", path)
@@ -2495,6 +2516,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.baby_detail(con, user, path[6:])
             elif path.startswith("/img/"):
                 self.serve_img(path[5:])
+            elif path.startswith("/audio/"):
+                self.serve_audio(path[7:])
             else:
                 self.send_html(page("Not found", "<p>Unknown page.</p>",
                                     user), 404)
@@ -5461,7 +5484,11 @@ class Handler(BaseHTTPRequestHandler):
                 "flex-wrap:wrap;gap:8px;align-items:center;"
                 "justify-content:space-between;background:#0d3b38;"
                 "border-bottom:4px solid #d4af37'><b "
-                "style='color:#f0c75e'>🌍 Live World</b><span style='font-size:12px;color:#f0c75e;border:1px solid #d4af37;border-radius:8px;padding:1px 6px;margin-left:6px'>🌳 Forest</span>"
+                "style='color:#f0c75e'>🌍 Live World</b><span style='font-size:12px;color:#f0c75e;border:1px solid #d4af37;'border-radius:8px;padding:1px 6px;margin-left:6px'>🌳 Forest</span>"
+                "<button id='bgmbtn' onclick='toggleBgm()' "
+                "style='font-size:13px;padding:4px 10px'>🔊 Play music"
+                "</button><audio id='bgm' loop preload='auto' "
+                "src='/audio/village-theme.mp3'></audio>"
                 "<span id='zonelabel' style='font-size:13px;color:#f0c75e'></span>"
                 "<span style='font-size:13px'>"
                 "<a href='/play'>Play scene</a> | "
@@ -5532,6 +5559,7 @@ class Handler(BaseHTTPRequestHandler):
                 "m.username)+':</b> '+esc(m.text);}).join('<br>');"
                 "if(st.villain_msg){var vm=document.getElementById('sysmsg');if(vm){vm.textContent=st.villain_msg;}}"
                 "var mep=(st.players||[]).filter(function(p){return p.you;})[0];var mx=mep?mep.x:50;var my=mep?mep.y:50;var cx=Math.max(-100,Math.min(0,50-2*mx));var cy=Math.max(-100,Math.min(0,50-2*my));var w=document.getElementById('world');if(w){w.style.left=cx+'%';w.style.top=cy+'%';}window._CAMX=cx;window._CAMY=cy;}"
+                "function toggleBgm(){var a=document.getElementById('bgm');var b=document.getElementById('bgmbtn');if(!a){return;}if(a.paused){var pr=a.play();if(pr&&pr.catch){pr.catch(function(){});}if(b){b.textContent='🔇 Mute';}}else{a.pause();if(b){b.textContent='🔊 Play music';}}}"
                 "function poll(){fetch('/play_state').then(function(r)"
                 "{return r.json();}).then(render);}"
                 "function move(dx,dy){if(!ME||!POS){return;}"
