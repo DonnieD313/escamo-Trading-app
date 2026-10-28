@@ -1564,6 +1564,63 @@ def main():
             except subprocess.TimeoutExpired:
                 rproc.kill()
 
+        # 15c. Renamed starter keeps its real photo: photos match
+        # by the original character, not the display name.
+        nport, ndb = 8101, "/tmp/escamo_rename_test.db"
+        nproc, nbase = start_server(nport, ndb, {})
+        try:
+            njar = http.cookiejar.CookieJar()
+            s, _ = signup_full(njar, "renameuser", "pass123",
+                               tribe="Reds", roster="Ember", name="sasha",
+                               base=nbase)
+            check("renamed signup succeeds", s in (200, 302))
+            s, me_html = get(njar, "/me", base=nbase)
+            check("renamed starter shows its real photo",
+                  "<img src='/img/ember.jpg'" in me_html)
+        finally:
+            nproc.terminate()
+            try:
+                nproc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                nproc.kill()
+
+        # 15d. Backfill: a pre-existing renamed baby on an old-schema
+        # database gets its original character from its face on startup.
+        bdb = "/tmp/escamo_backfill_test.db"
+        if os.path.exists(bdb):
+            os.remove(bdb)
+        _con = sqlite3.connect(bdb)
+        _con.execute(
+            "CREATE TABLE babies (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " cert TEXT UNIQUE NOT NULL, owner_id INTEGER NOT NULL,"
+            " name TEXT NOT NULL, tribe TEXT NOT NULL,"
+            " hoodie_pattern TEXT NOT NULL, stones TEXT NOT NULL,"
+            " face TEXT NOT NULL, for_trade INTEGER NOT NULL DEFAULT 0,"
+            " is_custom INTEGER NOT NULL DEFAULT 0, gender TEXT,"
+            " created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+        _con.execute(
+            "INSERT INTO babies (cert, owner_id, name, tribe,"
+            " hoodie_pattern, stones, face, is_custom, gender)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
+            ("EHB-R900", 1, "sasha", "Reds", "Thunder Crest",
+             "red stones",
+             "angel-like, curious with tilted head and wide inquisitive eyes",
+             0, None))
+        _con.commit()
+        _con.close()
+        _old_db = escamo_app.DB
+        try:
+            escamo_app.DB = bdb
+            escamo_app.init_db()
+        finally:
+            escamo_app.DB = _old_db
+        _con = sqlite3.connect(bdb)
+        _row = _con.execute(
+            "SELECT base_name FROM babies WHERE cert='EHB-R900'").fetchone()
+        _con.close()
+        check("backfill recovers a renamed baby's original character",
+              _row and _row[0] == "Ember")
+
         # 16. Deals, monthly gift, choice babies, pop-ups, ownership,
         # gender (mocked PayPal server).
         willow_row = {"id": 1, "name": "Willow", "cert": "EHB-BR001",

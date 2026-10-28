@@ -575,6 +575,7 @@ def init_db():
         for_trade INTEGER NOT NULL DEFAULT 0,
         is_custom INTEGER NOT NULL DEFAULT 0,
         gender TEXT,
+        base_name TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS monthly_gifts (
@@ -851,6 +852,25 @@ def init_db():
                  con.execute("PRAGMA table_info(babies)").fetchall()]
     if "color_theme" not in baby_cols:
         con.execute("ALTER TABLE babies ADD COLUMN color_theme TEXT")
+    # Remembered original character: a renamed starter/choice baby
+    # keeps its real photo. Photos match by base_name (the roster or
+    # shop character the baby was minted as), falling back to the
+    # display name for older rows. Existing renamed babies are
+    # backfilled from their face description, which is unique
+    # within a tribe; custom babies are never backfilled.
+    if "base_name" not in baby_cols:
+        con.execute("ALTER TABLE babies ADD COLUMN base_name TEXT")
+    face_to_base = {}
+    for _n, _f in CHARACTER_FACES.items():
+        if _n in REALISTIC_IMAGES:
+            face_to_base.setdefault(_f, []).append(_n)
+    for _row in con.execute(
+            "SELECT id, face FROM babies WHERE base_name IS NULL"
+            " AND is_custom=0").fetchall():
+        _names = face_to_base.get(_row["face"], [])
+        if len(_names) == 1:
+            con.execute("UPDATE babies SET base_name=? WHERE id=?",
+                        (_names[0], _row["id"]))
     con.execute("""
     CREATE TABLE IF NOT EXISTS recolor_choices (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -967,7 +987,7 @@ def new_invite_code(con):
 
 
 def mint_baby(con, owner_id, tribe=None, name=None, pattern=None,
-              stones=None, face=None, is_custom=0):
+              stones=None, face=None, is_custom=0, base_name=None):
     """Create one unique baby (1-of-1 certificate) for an owner."""
     if tribe is None:
         tribe = random.choice(list(STARTERS))
@@ -976,6 +996,8 @@ def mint_baby(con, owner_id, tribe=None, name=None, pattern=None,
     pattern = pattern or random.choice(pool["patterns"])
     stones = stones or pool["stones"]
     face = face or face_for(name, tribe, pool["face"])
+    if base_name is None and not is_custom and name in REALISTIC_IMAGES:
+        base_name = name
     prefix = pool["prefix"] if tribe in STARTERS else "C"
     n = con.execute("SELECT COUNT(*) FROM babies WHERE tribe=?",
                     (tribe,)).fetchone()[0] + 1
@@ -987,9 +1009,11 @@ def mint_baby(con, owner_id, tribe=None, name=None, pattern=None,
         n += 1
     con.execute(
         "INSERT INTO babies (cert, owner_id, name, tribe, hoodie_pattern,"
-        " stones, face, is_custom, gender) VALUES (?,?,?,?,?,?,?,?,?)",
+        " stones, face, is_custom, gender, base_name)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?)",
         (cert, owner_id, name, tribe, pattern, stones, face, is_custom,
-         baby_gender(tribe, pattern, stones, name=name, cert=cert)))
+         baby_gender(tribe, pattern, stones, name=name, cert=cert),
+         base_name))
     return cert
 
 
@@ -1871,12 +1895,16 @@ def portrait_svg(b, size=120):
 def realistic_img_file(b):
     """Realistic photo filename for this baby, or None.
 
-    The 40 photographed characters match by name; every Black baby
-    (any name) uses the Black Miner photo. Anything else returns
-    None and keeps its SVG portrait.
+    Photos match by base_name (the roster or shop character the
+    baby was minted as), falling back to the display name for
+    older rows. Every Black baby (any name) uses the Black Miner
+    photo. Anything else returns None and keeps its SVG portrait.
     """
     if _bget(b, "tribe") == "Blacks":
         return "black-miner.jpg"
+    base = _bget(b, "base_name")
+    if base:
+        return REALISTIC_IMAGES.get(base)
     return REALISTIC_IMAGES.get(_bget(b, "name"))
 
 
@@ -2864,7 +2892,8 @@ class Handler(BaseHTTPRequestHandler):
         # The free baby is the chosen character with the chosen name,
         # using the tribe's default pattern, rhinestones, and face.
         mint_baby(con, user_id, tribe=tribe, name=baby_name,
-              face=face_for(roster_name, tribe, STARTERS[tribe]["face"]))
+              face=face_for(roster_name, tribe, STARTERS[tribe]["face"]),
+              base_name=roster_name)
         # Invite bonus: the inviter gets +20 points, balance AND earned
         # (invite bonuses are earned, not bought).
         if pending["invited_by"]:
@@ -5577,7 +5606,8 @@ class Handler(BaseHTTPRequestHandler):
                 "characters for your chosen tribe.</p>", user))
             return
         baby_name = (f.get("baby_name") or "").strip()[:40] or roster
-        cert = mint_baby(con, user["id"], tribe=tribe, name=baby_name)
+        cert = mint_baby(con, user["id"], tribe=tribe, name=baby_name,
+                         base_name=roster)
         con.execute(
             "INSERT INTO choice_claims (user_id, baby_cert)"
             " VALUES (?,?)", (user["id"], cert))
