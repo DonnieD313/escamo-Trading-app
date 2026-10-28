@@ -2687,15 +2687,15 @@ class Handler(BaseHTTPRequestHandler):
                 "address — please wait a few minutes and try again.</p>"),
                 429)
             return
-        founder_code = os.environ.get("FOUNDER_RESET_CODE", "")
+        founder_code = os.environ.get("FOUNDER_RESET_CODE", "").strip()
         if not founder_code:
             rate_record_fail(key)
             self.forgot_form("<p class='err'>Password reset is not set "
                              "up yet — the founder code has not been "
                              "added to the app's environment.</p>")
             return
-        if not hmac.compare_digest(f.get("founder_code", ""),
-                                   founder_code):
+        if not hmac.compare_digest((f.get("founder_code", "") or "").strip().casefold(),
+                                   founder_code.casefold()):
             rate_record_fail(key)
             self.forgot_form("<p class='err'>That founder code is "
                              "wrong.</p>")

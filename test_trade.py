@@ -1545,6 +1545,18 @@ def main():
                                "password": "newpass"}, base=rbase)
             check("new password signs in after reset",
                   "My Collection" in me_html)
+            s, case = post(rjar, "/reset_password",
+                           {"username": "resetuser",
+                            "founder_code": "  FOUNDER-Test-Code  ",
+                            "new_password": "newpass2"},
+                           base=rbase)
+            check("founder code ignores case and spaces",
+                  "Password reset" in case)
+            s, me2_html = post(rjar, "/login",
+                               {"username": "resetuser",
+                                "password": "newpass2"}, base=rbase)
+            check("password from case-tolerant reset signs in",
+                  "My Collection" in me2_html)
         finally:
             rproc.terminate()
             try:
