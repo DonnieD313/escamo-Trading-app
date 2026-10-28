@@ -5089,8 +5089,9 @@ class Handler(BaseHTTPRequestHandler):
         in the Live World, and their latest chat line (shown as a
         speech bubble for 2 minutes). Offline players, including old
         accounts nobody signs into, do not stand in the field.
-        Positions default to a scattered spawn point until a player
-        moves."""
+        The signed-in viewer always stands in their own field, even
+        if their last-seen stamp is stale. Positions default to a
+        scattered spawn point until a player moves."""
         def online(p):
             raw = _bget(p, "last_seen")
             if not raw:
@@ -5110,7 +5111,7 @@ class Handler(BaseHTTPRequestHandler):
             "users.username").fetchall()
         out = []
         for p in players:
-            if not online(p):
+            if not online(p) and not (user and user["id"] == p["id"]):
                 continue
             baby = con.execute("SELECT * FROM babies WHERE owner_id=? "
                                "ORDER BY id LIMIT 1",
@@ -5468,9 +5469,11 @@ class Handler(BaseHTTPRequestHandler):
             controls = (
                 "<div style='background:#14524d;padding:10px;color:#fdf6e3;"
                 "border-top:4px solid #d4af37;"
-                "text-align:center'><a href='/login'>Log in</a> or "
-                "<a href='/signup'>sign up</a> to walk around and "
-                "chat — you can watch everyone else meanwhile.</div>")
+                "text-align:center'>You are not signed in, so your "
+                "character is not in the field. <a href='/login'>Log "
+                "in</a> or <a href='/signup'>sign up</a> to walk "
+                "around and chat — you can watch everyone else "
+                "meanwhile.</div>")
         # Play-scene-style trees: round leafy emoji, gently swaying,
         # scattered around the field where the blocky trees stood.
         def field_tree(lx, ty, emoji):
