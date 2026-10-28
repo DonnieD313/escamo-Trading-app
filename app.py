@@ -5464,6 +5464,8 @@ class Handler(BaseHTTPRequestHandler):
                 "margin-top:6px'><input id='chatin' maxlength='200' "
                 "placeholder='Say something to the village…' "
                 "style='flex:1;padding:12px;font-size:16px' autocomplete='off'>"
+                "<button type='button' id='micbtn' onclick='toggleMic()' "
+                "style='padding:12px;font-size:18px'>🎤</button>"
                 "<button>Send</button></form></div>")
         else:
             controls = (
@@ -5691,6 +5693,12 @@ class Handler(BaseHTTPRequestHandler):
                 "document.addEventListener('mouseup',joyEnd);"
                 "setInterval(tick,100);}"
                 "joyInit();"
+                "var micRec=null;var micOn=false;"
+                "function toggleMic(){var b=document.getElementById('micbtn');var inp=document.getElementById('chatin');if(micOn&&micRec){micRec.stop();return;}var SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR){var m=document.getElementById('sysmsg');if(m){m.textContent='Voice typing is not supported in this browser \u2014 try Samsung Browser or Chrome.';}return;}micRec=new SR();micRec.lang='en-US';micRec.interimResults=true;micRec.continuous=false;"
+                "micRec.onresult=function(ev){var t='';for(var i=0;i<ev.results.length;i++){t+=ev.results[i][0].transcript;}if(inp){inp.value=t;};};"
+                "micRec.onend=function(){micOn=false;if(b){b.textContent='🎤';};};"
+                "micRec.onerror=function(){micOn=false;if(b){b.textContent='🎤';}var m=document.getElementById('sysmsg');if(m){m.textContent='Could not hear you \u2014 check the mic permission and try again.';};};"
+                "micOn=true;if(b){b.textContent='🔴';}try{micRec.start();}catch(e){micOn=false;if(b){b.textContent='🎤';}}}"
                 "poll();setInterval(poll,2000);fetch('/popup_banner').then(function(r){return r.json();}).then(function(d){if(!d.active){return;}if(localStorage.getItem('popup_seen')===d.cert){return;}var b=document.getElementById('popup-banner');var bar=document.createElement('div');bar.style.cssText='background:#f5c542;padding:10px;text-align:center;font-weight:bold';bar.textContent='🎉 A pop-up has arrived: '+d.name+'! ';var a=document.createElement('a');a.href='/shop';a.textContent='See it in the Shop';bar.appendChild(a);var x=document.createElement('button');x.textContent=' × ';x.onclick=function(){localStorage.setItem('popup_seen',d.cert);b.innerHTML='';};bar.appendChild(document.createTextNode(' '));bar.appendChild(x);b.appendChild(bar);});</script>"
                 "</body></html>")
         self.send_html(html)

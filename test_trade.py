@@ -3780,6 +3780,10 @@ def main():
                   "sleeper" not in onames
                   and any(p["you"]
                           for p in json.loads(shstate)["players"]))
+            s, live4 = get(sh, "/live", base=pbase)
+            check("chat has a mic button for voice typing",
+                  "id='micbtn'" in live4 and "toggleMic" in live4
+                  and "SpeechRecognition" in live4)
             s, dstate = get(anon, "/play_state", base=pbase)
             dplayers = {p["username"]: p
                         for p in json.loads(dstate)["players"]}
