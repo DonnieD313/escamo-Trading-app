@@ -3763,6 +3763,23 @@ def main():
             s, pun2 = post(sh, "/punch", {}, base=pbase)
             check("punching while Snatcher is gone is refused",
                   json.loads(pun2).get("error") == "gone")
+            s, live3 = get(sh, "/live", base=pbase)
+            check("joystick moves the local avatar at once",
+                  "window._JOYACT" in live3
+                  and "setInterval(tick,100)" in live3)
+            sleeper_jar = http.cookiejar.CookieJar()
+            signup_full(sleeper_jar, "sleeper", "pw123456", tribe="Blues",
+                        roster="Marina", name="SleeperBaby", base=pbase)
+            pcongs.execute("UPDATE users SET last_seen='2020-01-01 00:00:00' "
+                           "WHERE username='sleeper'")
+            pcongs.commit()
+            s, ostate = get(anon, "/play_state", base=pbase)
+            onames = [p["username"] for p in json.loads(ostate)["players"]]
+            s, shstate = get(sh, "/play_state", base=pbase)
+            check("offline players no longer stand in the field",
+                  "sleeper" not in onames
+                  and any(p["you"]
+                          for p in json.loads(shstate)["players"]))
             s, dstate = get(anon, "/play_state", base=pbase)
             dplayers = {p["username"]: p
                         for p in json.loads(dstate)["players"]}

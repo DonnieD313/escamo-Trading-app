@@ -5085,10 +5085,12 @@ class Handler(BaseHTTPRequestHandler):
         return (x, y)
 
     def _live_players(self, con, user):
-        """Everyone with a baby, where they stand in the Live World,
-        and their latest chat line (shown as a speech bubble for 2
-        minutes). Positions default to a scattered spawn point until
-        a player moves."""
+        """Players active in the last 5 minutes, where they stand
+        in the Live World, and their latest chat line (shown as a
+        speech bubble for 2 minutes). Offline players, including old
+        accounts nobody signs into, do not stand in the field.
+        Positions default to a scattered spawn point until a player
+        moves."""
         def online(p):
             raw = _bget(p, "last_seen")
             if not raw:
@@ -5108,6 +5110,8 @@ class Handler(BaseHTTPRequestHandler):
             "users.username").fetchall()
         out = []
         for p in players:
+            if not online(p):
+                continue
             baby = con.execute("SELECT * FROM babies WHERE owner_id=? "
                                "ORDER BY id LIMIT 1",
                                (p["id"],)).fetchone()
@@ -5637,7 +5641,7 @@ class Handler(BaseHTTPRequestHandler):
                 "st.messages.map(function(m){return '<b>'+esc("
                 "m.username)+':</b> '+esc(m.text);}).join('<br>');"
                 "if(st.villain_msg){var vm=document.getElementById('sysmsg');if(vm){vm.textContent=st.villain_msg;}}"
-                "var mep=(st.players||[]).filter(function(p){return p.you;})[0];var mx=mep?mep.x:50;var my=mep?mep.y:50;var cx=Math.max(-100,Math.min(0,50-2*mx));var cy=Math.max(-100,Math.min(0,50-2*my));var w=document.getElementById('world');if(w){w.style.left=cx+'%';w.style.top=cy+'%';}window._CAMX=cx;window._CAMY=cy;}"
+                "var mep=(st.players||[]).filter(function(p){return p.you;})[0];var mx=mep?mep.x:50;var my=mep?mep.y:50;var cx=Math.max(-100,Math.min(0,50-2*mx));var cy=Math.max(-100,Math.min(0,50-2*my));var w=document.getElementById('world');if(w){w.style.left=cx+'%';w.style.top=cy+'%';}window._CAMX=cx;window._CAMY=cy;if(window._JOYACT&&POS){var me2=document.getElementById('me-ava');if(me2){me2.style.left=POS.x+'%';me2.style.top=POS.y+'%';}var w2=document.getElementById('world');if(w2){var cx2=Math.max(-100,Math.min(0,50-2*POS.x));var cy2=Math.max(-100,Math.min(0,50-2*POS.y));w2.style.left=cx2+'%';w2.style.top=cy2+'%';window._CAMX=cx2;window._CAMY=cy2;}}}"
                 "function toggleBgm(){var a=document.getElementById('bgm');var b=document.getElementById('bgmbtn');if(!a){return;}if(a.paused){var pr=a.play();if(pr&&pr.catch){pr.catch(function(){});}if(b){b.textContent='🔇 Mute';}}else{a.pause();if(b){b.textContent='🔊 Play music';}}}"
                 "function poll(){fetch('/play_state').then(function(r)"
                 "{return r.json();}).then(render);}"
@@ -5674,15 +5678,15 @@ class Handler(BaseHTTPRequestHandler):
                 "function(){inp.value='';poll();});});}"
                 "function joyInit(){var j=document.getElementById('joy');if(!j){return;}var k=document.getElementById('knob');var act=false;var vx=0,vy=0;var last=0;"
                 "function upd(e){var r=j.getBoundingClientRect();var t=e.touches?e.touches[0]:e;var dx=t.clientX-(r.left+r.width/2);var dy=t.clientY-(r.top+r.height/2);var d=Math.sqrt(dx*dx+dy*dy);var m=d>40?40:d;if(d>0){dx=dx/d*m;dy=dy/d*m;}k.style.left=(31+dx)+'px';k.style.top=(31+dy)+'px';vx=m>8?dx/40:0;vy=m>8?dy/40:0;}"
-                "function tick(){if(!act||!POS){return;}if(vx||vy){POS.x=Math.max(0,Math.min(92,POS.x+vx*3));POS.y=Math.max(0,Math.min(85,POS.y+vy*3));var n=Date.now();if(n-last>300){last=n;var f=new URLSearchParams();f.append('csrf_token',CSRF);f.append('x',POS.x);f.append('y',POS.y);fetch('/play_move',{method:'POST',body:f});poll();}}}"
-                "j.addEventListener('touchstart',function(e){if(!ME||!POS){return;}act=true;e.preventDefault();upd(e);},{passive:false});"
+                "function tick(){if(!act||!POS){return;}if(vx||vy){POS.x=Math.max(0,Math.min(92,POS.x+vx*3));POS.y=Math.max(0,Math.min(85,POS.y+vy*3));var me=document.getElementById('me-ava');if(me){me.style.left=POS.x+'%';me.style.top=POS.y+'%';}var w=document.getElementById('world');if(w){var cx=Math.max(-100,Math.min(0,50-2*POS.x));var cy=Math.max(-100,Math.min(0,50-2*POS.y));w.style.left=cx+'%';w.style.top=cy+'%';window._CAMX=cx;window._CAMY=cy;}var n=Date.now();if(n-last>300){last=n;var f=new URLSearchParams();f.append('csrf_token',CSRF);f.append('x',POS.x);f.append('y',POS.y);fetch('/play_move',{method:'POST',body:f});poll();}}}"
+                "j.addEventListener('touchstart',function(e){if(!ME||!POS){return;}act=true;window._JOYACT=true;e.preventDefault();upd(e);},{passive:false});"
                 "j.addEventListener('touchmove',function(e){if(act){e.preventDefault();upd(e);}},{passive:false});"
-                "function joyEnd(){act=false;vx=0;vy=0;k.style.left='31px';k.style.top='31px';}"
+                "function joyEnd(){act=false;window._JOYACT=false;vx=0;vy=0;k.style.left='31px';k.style.top='31px';}"
                 "j.addEventListener('touchend',joyEnd);j.addEventListener('touchcancel',joyEnd);"
-                "j.addEventListener('mousedown',function(e){if(!ME||!POS){return;}act=true;upd(e);});"
+                "j.addEventListener('mousedown',function(e){if(!ME||!POS){return;}act=true;window._JOYACT=true;upd(e);});"
                 "document.addEventListener('mousemove',function(e){if(act){upd(e);}});"
                 "document.addEventListener('mouseup',joyEnd);"
-                "setInterval(tick,150);}"
+                "setInterval(tick,100);}"
                 "joyInit();"
                 "poll();setInterval(poll,2000);fetch('/popup_banner').then(function(r){return r.json();}).then(function(d){if(!d.active){return;}if(localStorage.getItem('popup_seen')===d.cert){return;}var b=document.getElementById('popup-banner');var bar=document.createElement('div');bar.style.cssText='background:#f5c542;padding:10px;text-align:center;font-weight:bold';bar.textContent='🎉 A pop-up has arrived: '+d.name+'! ';var a=document.createElement('a');a.href='/shop';a.textContent='See it in the Shop';bar.appendChild(a);var x=document.createElement('button');x.textContent=' × ';x.onclick=function(){localStorage.setItem('popup_seen',d.cert);b.innerHTML='';};bar.appendChild(document.createTextNode(' '));bar.appendChild(x);b.appendChild(bar);});</script>"
                 "</body></html>")
