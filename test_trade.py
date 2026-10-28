@@ -1682,6 +1682,142 @@ def main():
         check("backfill recovers a renamed baby's original character",
               _row and _row[0] == "Ember")
 
+        # 15e. Founder-approved deletion: startup cleanup removes
+        # Donnie and DonDon57 and every row tied to them, and leaves
+        # other players untouched.
+        ddb = "/tmp/escamo_delete_test.db"
+        if os.path.exists(ddb):
+            os.remove(ddb)
+        _old_db = escamo_app.DB
+        try:
+            escamo_app.DB = ddb
+            escamo_app.init_db()
+            _con = sqlite3.connect(ddb)
+            for _u, _code in (("Donnie", "DDDD0001"),
+                              ("DonDon57", "DDDD0002"),
+                              ("keeper", "DDDD0003")):
+                _con.execute(
+                    "INSERT INTO users (username, password_hash, salt,"
+                    " invite_code) VALUES (?,?,?,?)", (_u, "x", "y", _code))
+            _don = _con.execute(
+                "SELECT id FROM users WHERE username='Donnie'"
+                ).fetchone()[0]
+            _dd = _con.execute(
+                "SELECT id FROM users WHERE username='DonDon57'"
+                ).fetchone()[0]
+            _keep = _con.execute(
+                "SELECT id FROM users WHERE username='keeper'"
+                ).fetchone()[0]
+            _con.execute("UPDATE users SET invited_by=? WHERE id=?",
+                         (_don, _keep))
+            _babies = {}
+            for _cert, _uid, _nm, _tr in (
+                    ("EHB-T001", _don, "Marina", "Blues"),
+                    ("EHB-T002", _dd, "sassy bree", "Reds"),
+                    ("EHB-T003", _keep, "Willow", "Browns")):
+                _con.execute(
+                    "INSERT INTO babies (cert, owner_id, name, tribe,"
+                    " hoodie_pattern, stones, face) VALUES (?,?,?,?,?,?,?)",
+                    (_cert, _uid, _nm, _tr, "P", "s", "f"))
+                _babies[_cert] = _con.execute(
+                    "SELECT id FROM babies WHERE cert=?",
+                    (_cert,)).fetchone()[0]
+            _con.execute("INSERT INTO shelf_items (user_id, baby_id,"
+                         " position) VALUES (?,?,0)",
+                         (_don, _babies["EHB-T001"]))
+            _con.execute("INSERT INTO shelf_items (user_id, baby_id,"
+                         " position) VALUES (?,?,0)",
+                         (_keep, _babies["EHB-T003"]))
+            for _uid in (_don, _dd, _keep):
+                _con.execute("INSERT INTO player_positions (user_id, x,"
+                             " y) VALUES (?,?,?)", (_uid, 10, 20))
+            _con.execute("INSERT INTO play_chat (user_id, text)"
+                         " VALUES (?,?)", (_don, "hi"))
+            _con.execute("INSERT INTO sessions (token, user_id)"
+                         " VALUES (?,?)", ("tok1", _don))
+            _con.execute("INSERT INTO offers (from_user, to_user,"
+                         " offered_baby, wanted_baby) VALUES (?,?,?,?)",
+                         (_don, _keep, _babies["EHB-T001"],
+                          _babies["EHB-T003"]))
+            _off = _con.execute(
+                "SELECT id FROM offers").fetchone()[0]
+            _con.execute("INSERT INTO recolor_choices (user_id, baby_id,"
+                         " offer_id) VALUES (?,?,?)",
+                         (_keep, _babies["EHB-T001"], _off))
+            _con.execute("INSERT INTO point_gifts (from_user, to_user,"
+                         " points) VALUES (?,?,?)", (_dd, _keep, 50))
+            _con.execute("INSERT INTO points_listings (baby_id,"
+                         " seller_id, points) VALUES (?,?,?)",
+                         (_babies["EHB-T002"], _dd, 100))
+            _con.execute("INSERT INTO carried_items (user_id, kind)"
+                         " VALUES (?,?)", (_dd, "🌸"))
+            _con.execute("INSERT INTO village_builds (user_id, piece)"
+                         " VALUES (?,?)", (_don, "tree"))
+            _con.execute("INSERT INTO monthly_gifts (user_id, month,"
+                         " baby_cert) VALUES (?,?,?)",
+                         (_dd, "2026-10", "EHB-T002"))
+            _con.execute("INSERT INTO purchases (user_id, item_type,"
+                         " item_ref, amount) VALUES (?,?,?,?)",
+                         (_don, "baby", "EHB-T001", "1.00"))
+            _con.execute("INSERT INTO pending_signups (token, username,"
+                         " password_hash, salt, tribe) VALUES (?,?,?,?,?)",
+                         ("pend1", "Donnie", "x", "y", "Blues"))
+            _con.commit()
+            _con.close()
+            escamo_app.init_db()
+            _con = sqlite3.connect(ddb)
+            _gone_users = _con.execute(
+                "SELECT COUNT(*) FROM users WHERE username IN"
+                " ('Donnie','DonDon57')").fetchone()[0]
+            _gone_babies = _con.execute(
+                "SELECT COUNT(*) FROM babies WHERE cert IN"
+                " ('EHB-T001','EHB-T002')").fetchone()[0]
+            _gone_links = _con.execute(
+                "SELECT COUNT(*) FROM offers").fetchone()[0] + _con.execute(
+                "SELECT COUNT(*) FROM point_gifts").fetchone()[0] \
+                + _con.execute(
+                "SELECT COUNT(*) FROM points_listings").fetchone()[0] \
+                + _con.execute(
+                "SELECT COUNT(*) FROM play_chat").fetchone()[0] \
+                + _con.execute(
+                "SELECT COUNT(*) FROM sessions").fetchone()[0] \
+                + _con.execute(
+                "SELECT COUNT(*) FROM recolor_choices").fetchone()[0] \
+                + _con.execute(
+                "SELECT COUNT(*) FROM carried_items").fetchone()[0] \
+                + _con.execute(
+                "SELECT COUNT(*) FROM village_builds").fetchone()[0] \
+                + _con.execute(
+                "SELECT COUNT(*) FROM monthly_gifts").fetchone()[0] \
+                + _con.execute(
+                "SELECT COUNT(*) FROM purchases").fetchone()[0] \
+                + _con.execute(
+                "SELECT COUNT(*) FROM pending_signups").fetchone()[0]
+            _keep_rows = _con.execute(
+                "SELECT COUNT(*) FROM users WHERE username='keeper'"
+                ).fetchone()[0]
+            _keep_baby = _con.execute(
+                "SELECT COUNT(*) FROM babies WHERE cert='EHB-T003'"
+                ).fetchone()[0]
+            _keep_shelf = _con.execute(
+                "SELECT COUNT(*) FROM shelf_items WHERE user_id=?",
+                (_keep,)).fetchone()[0]
+            _keep_pos = _con.execute(
+                "SELECT COUNT(*) FROM player_positions WHERE user_id=?",
+                (_keep,)).fetchone()[0]
+            _keep_inv = _con.execute(
+                "SELECT invited_by FROM users WHERE username='keeper'"
+                ).fetchone()[0]
+            _con.close()
+            check("startup deletion removes Donnie and DonDon57 fully"
+                  " and keeps other players",
+                  _gone_users == 0 and _gone_babies == 0
+                  and _gone_links == 0 and _keep_rows == 1
+                  and _keep_baby == 1 and _keep_shelf == 1
+                  and _keep_pos == 1 and _keep_inv is None)
+        finally:
+            escamo_app.DB = _old_db
+
         # 16. Deals, monthly gift, choice babies, pop-ups, ownership,
         # gender (mocked PayPal server).
         willow_row = {"id": 1, "name": "Willow", "cert": "EHB-BR001",

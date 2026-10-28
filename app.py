@@ -548,6 +548,71 @@ def db():
     return con
 
 
+def delete_user_account(con, username):
+    """Permanently delete one account and every row tied to it.
+
+    Children first (foreign keys are enforced), then the user's babies,
+    then the user row itself. Returns True when a user was deleted.
+    """
+    row = con.execute("SELECT id FROM users WHERE username=?",
+                      (username,)).fetchone()
+    if not row:
+        return False
+    uid = row["id"]
+    baby_ids = [r["id"] for r in con.execute(
+        "SELECT id FROM babies WHERE owner_id=?", (uid,)).fetchall()]
+    offer_ids = [r["id"] for r in con.execute(
+        "SELECT id FROM offers WHERE from_user=? OR to_user=?",
+        (uid, uid)).fetchall()]
+    if baby_ids:
+        q = ",".join("?" * len(baby_ids))
+        offer_ids += [r["id"] for r in con.execute(
+            "SELECT id FROM offers WHERE offered_baby IN (%s) OR "
+            "wanted_baby IN (%s)" % (q, q),
+            baby_ids + baby_ids).fetchall()]
+    offer_ids = sorted(set(offer_ids))
+    if offer_ids:
+        q = ",".join("?" * len(offer_ids))
+        con.execute("UPDATE offers SET counter_of=NULL WHERE "
+                    "counter_of IN (%s)" % q, offer_ids)
+        con.execute("DELETE FROM recolor_choices WHERE offer_id IN (%s)"
+                    % q, offer_ids)
+        con.execute("DELETE FROM recruit_choices WHERE offer_id IN (%s)"
+                    % q, offer_ids)
+        con.execute("DELETE FROM offers WHERE id IN (%s)" % q, offer_ids)
+    con.execute("DELETE FROM point_gifts WHERE from_user=? OR to_user=?",
+                (uid, uid))
+    if baby_ids:
+        q = ",".join("?" * len(baby_ids))
+        con.execute("DELETE FROM points_listings WHERE seller_id=? OR "
+                    "baby_id IN (%s)" % q, [uid] + baby_ids)
+        con.execute("DELETE FROM shelf_items WHERE user_id=? OR "
+                    "baby_id IN (%s)" % q, [uid] + baby_ids)
+        con.execute("DELETE FROM recolor_choices WHERE user_id=? OR "
+                    "baby_id IN (%s)" % q, [uid] + baby_ids)
+        con.execute("DELETE FROM recruit_choices WHERE user_id=? OR "
+                    "baby_id IN (%s)" % q, [uid] + baby_ids)
+    else:
+        con.execute("DELETE FROM points_listings WHERE seller_id=?",
+                    (uid,))
+        con.execute("DELETE FROM shelf_items WHERE user_id=?", (uid,))
+        con.execute("DELETE FROM recolor_choices WHERE user_id=?", (uid,))
+        con.execute("DELETE FROM recruit_choices WHERE user_id=?", (uid,))
+    for table in ("monthly_gifts", "choice_claims", "purchases",
+                  "village_builds", "player_positions", "play_chat",
+                  "carried_items", "sessions"):
+        con.execute("DELETE FROM %s WHERE user_id=?" % table, (uid,))
+    con.execute("DELETE FROM babies WHERE owner_id=?", (uid,))
+    con.execute("DELETE FROM pending_signups WHERE username=?",
+                (username,))
+    con.execute("UPDATE users SET invited_by=NULL WHERE invited_by=?",
+                (uid,))
+    con.execute("UPDATE pending_signups SET invited_by=NULL WHERE "
+                "invited_by=?", (uid,))
+    con.execute("DELETE FROM users WHERE id=?", (uid,))
+    return True
+
+
 def init_db():
     con = db()
     con.executescript("""
@@ -968,6 +1033,11 @@ def init_db():
                 "'A Black has popped up', 'A Shadow has popped up')")
     con.execute("UPDATE notices SET text=REPLACE(text, "
                 "'A Black was caught', 'A Shadow was caught')")
+    # Founder-approved removal (2026-10-27, Doneil's word): delete the
+    # test accounts Donnie and DonDon57 and every row tied to them.
+    # Idempotent: rerunning finds no such users and changes nothing.
+    for _gone in ("Donnie", "DonDon57"):
+        delete_user_account(con, _gone)
     con.commit()
     con.close()
 
