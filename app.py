@@ -346,6 +346,8 @@ def village_pieces_str(con, user_id):
         mark = BUILD_PIECES.get(r["piece"], ("", "", 0))[0]
         if mark:
             parts.append("%s \u00d7 %d" % (mark, r["n"]))
+    if item_use_row(con, user_id, "wood"):
+        parts.append("\U0001f525 \u00d7 1")
     return " ".join(parts)
 
 
@@ -372,13 +374,42 @@ COIN_SHOP_ITEMS = {
 def coin_items_str(con, user_id):
     rows = con.execute(
         "SELECT item, COUNT(*) AS n FROM player_items WHERE "
-        "user_id=? GROUP BY item ORDER BY item", (user_id,)).fetchall()
+        "user_id=? GROUP BY item ORDER BY item",
+        (user_id,)).fetchall()
     parts = []
     for r in rows:
         mark = COIN_SHOP_ITEMS.get(r["item"], ("", "", 0, ""))[0]
         if mark:
             parts.append("%s \u00d7 %d" % (mark, r["n"]))
     return " ".join(parts)
+
+
+# Coin Shop item uses: one display-only village action per owned
+# item. One row per (player, item); using again overwrites it, so
+# the meal, the fish, and the glow are good for the day, the
+# campfire, the badge, and the path stay put, and the wand sparkle
+# moves to whichever baby it was last waved over.
+def item_use_row(con, user_id, item):
+    return con.execute("SELECT * FROM item_uses WHERE user_id=? "
+                       "AND item=?", (user_id, item)).fetchone()
+
+
+def item_use_lines(con, user_id):
+    today = datetime.date.today().isoformat()
+    lines = []
+    pot = item_use_row(con, user_id, "pot")
+    if pot and pot["used_date"] == today:
+        lines.append("\U0001f372 Meal on the table today")
+    rod = item_use_row(con, user_id, "rod")
+    if rod and rod["used_date"] == today:
+        lines.append("\U0001f41f Fish in the pond today")
+    shield = item_use_row(con, user_id, "shield")
+    if shield:
+        lines.append("\U0001f6e1 Guard badge on the gate")
+    sword = item_use_row(con, user_id, "sword")
+    if sword:
+        lines.append("\U0001f5e1 Brush path cleared")
+    return lines
 # Pop-up tiers: the weekly drifter plus limited-edition specials and
 # rares, and the weekly Shadow pop-up (a money purchase in the Shop).
 PRICE_SPECIAL = "2.50"
@@ -652,7 +683,8 @@ def delete_user_account(con, username):
         con.execute("DELETE FROM recolor_choices WHERE user_id=?", (uid,))
         con.execute("DELETE FROM recruit_choices WHERE user_id=?", (uid,))
     for table in ("monthly_gifts", "choice_claims", "purchases",
-                  "village_builds", "player_items", "player_positions",
+                  "village_builds", "player_items", "item_uses",
+                  "player_positions",
                   "play_chat",
                   "carried_items", "sessions"):
         con.execute("DELETE FROM %s WHERE user_id=?" % table, (uid,))
@@ -1025,6 +1057,14 @@ def init_db():
         user_id INTEGER NOT NULL REFERENCES users(id),
         piece TEXT NOT NULL,
         bought_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )""")
+    con.execute("""
+    CREATE TABLE IF NOT EXISTS item_uses (
+        user_id INTEGER NOT NULL,
+        item TEXT NOT NULL,
+        target_id INTEGER,
+        used_date TEXT NOT NULL,
+        PRIMARY KEY (user_id, item)
     )""")
     con.execute("""
     CREATE TABLE IF NOT EXISTS player_items (
@@ -2600,6 +2640,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.do_build_buy(con, user)
             elif path == "/coinshop_buy":
                 self.do_coinshop_buy(con, user)
+            elif path == "/item_use":
+                self.do_item_use(con, user)
             elif path == "/recolor":
                 self.do_recolor(con, user)
             elif path == "/recruit":
@@ -3267,6 +3309,8 @@ class Handler(BaseHTTPRequestHandler):
         pieces = village_pieces_str(con, user["id"])
         if pieces:
             body += ("<p>Built in your village: %s</p>" % esc(pieces))
+        for line in item_use_lines(con, user["id"]):
+            body += ("<p>%s</p>" % esc(line))
         body += "<h2>Build your village</h2>"
         for key, (mark, name, price) in BUILD_PIECES.items():
             body += ("<form method='post' action='/build_buy' "
@@ -3277,6 +3321,24 @@ class Handler(BaseHTTPRequestHandler):
         items = coin_items_str(con, user["id"])
         if items:
             body += ("<p>Your items: %s</p>" % esc(items))
+            body += "<h2>Use your items</h2>"
+            owned_items = [r["item"] for r in con.execute(
+                "SELECT DISTINCT item FROM player_items WHERE "
+                "user_id=? ORDER BY item", (user["id"],)).fetchall()]
+            for it in owned_items:
+                mark, name = COIN_SHOP_ITEMS[it][0], COIN_SHOP_ITEMS[it][1]
+                body += ("<form method='post' action='/item_use' "
+                         "style='display:inline'>"
+                         "<input type='hidden' name='item' value='%s'>"
+                         % it)
+                if it in ("potion", "wand"):
+                    body += ("<select name='baby_id'>%s</select> "
+                             % "".join(
+                                 "<option value='%d'>%s</option>"
+                                 % (b["id"], esc(b["name"]))
+                                 for b in babies))
+                body += ("<button>Use %s %s</button></form> "
+                         % (mark, name))
         invites = con.execute(
             "SELECT COUNT(*) FROM users WHERE invited_by=?",
             (user["id"],)).fetchone()[0]
@@ -3340,6 +3402,9 @@ class Handler(BaseHTTPRequestHandler):
                      "Buying that tribe's leader made you its owner — "
                      "if you trade the leader away, ownership passes "
                      "to the new holder.</p>" % esc(tribe_display(tribe)))
+        _today = datetime.date.today().isoformat()
+        _potion = item_use_row(con, user["id"], "potion")
+        _wand = item_use_row(con, user["id"], "wand")
         body += "<h2>My hoodie babies (%d)</h2>" % len(babies)
         listed = {r["baby_id"]: r["points"] for r in con.execute(
             "SELECT baby_id, points FROM points_listings WHERE "
@@ -3347,6 +3412,11 @@ class Handler(BaseHTTPRequestHandler):
             (user["id"],)).fetchall()}
         for b in babies:
             body += baby_card(b)
+            if (_potion and _potion["used_date"] == _today
+                    and _potion["target_id"] == b["id"]):
+                body += "<p>\u2728 Sparkling today</p>"
+            if _wand and _wand["target_id"] == b["id"]:
+                body += "<p>\u2728 Wand sparkle</p>"
             body += ("<form method='post' action='/toggle_trade'>"
                      "<input type='hidden' name='baby_id' value='%d'>"
                      "<button>%s</button></form>"
@@ -4864,9 +4934,12 @@ class Handler(BaseHTTPRequestHandler):
                 % (esc(owner["username"]), label))
         if not rows:
             body += "<p>This shelf is empty so far.</p>"
+        _wand = item_use_row(con, owner["id"], "wand")
         for r in rows:
             body += ("<div class='card %s'>%s</div>"
                      % (cls, baby_card(r)))
+            if _wand and _wand["target_id"] == r["id"]:
+                body += "<p>\u2728 Wand sparkle</p>"
             if editable:
                 body += ("<form method='post' action='/shelf_move' "
                          "style='display:inline'>"
@@ -4964,6 +5037,8 @@ class Handler(BaseHTTPRequestHandler):
             _pieces = village_pieces_str(con, p["id"])
             if _pieces:
                 body += ("<p>Built here: %s</p>" % esc(_pieces))
+            for _line in item_use_lines(con, p["id"]):
+                body += ("<p>%s</p>" % esc(_line))
             for b in babies:
                 body += baby_card(b)
         self.send_html(page("Village", body, user))
@@ -5385,6 +5460,60 @@ class Handler(BaseHTTPRequestHandler):
                     (user["id"], "👋 waves at %s!" % target))
         con.commit()
         self.send_json({"ok": True})
+
+    def do_item_use(self, con, user):
+        """Use an owned Coin Shop item. Display only: nothing here
+        fights, trades, or changes coins or points."""
+        if self.need_login(user):
+            return
+        form = self.form()
+        item = (form.get("item") or "").strip()
+        if item not in COIN_SHOP_ITEMS:
+            self.redirect("/me?msg=Unknown+item.")
+            return
+        owned = con.execute("SELECT * FROM player_items WHERE "
+                            "user_id=? AND item=?",
+                            (user["id"], item)).fetchone()
+        if not owned:
+            self.redirect("/me?msg=You+do+not+own+that+item+yet.")
+            return
+        baby = None
+        target_id = None
+        if item in ("potion", "wand"):
+            try:
+                target_id = int(form.get("baby_id", "0"))
+            except ValueError:
+                target_id = 0
+            baby = con.execute("SELECT * FROM babies WHERE id=? "
+                               "AND owner_id=?",
+                               (target_id, user["id"])).fetchone()
+            if not baby:
+                self.redirect("/me?msg=Pick+one+of+your+own+babies.")
+                return
+        if item == "wood" and item_use_row(con, user["id"], "wood"):
+            self.redirect("/me?msg=Your+campfire+is+already+built!")
+            return
+        today = datetime.date.today().isoformat()
+        con.execute("INSERT OR REPLACE INTO item_uses (user_id, item, "
+                    "target_id, used_date) VALUES (?, ?, ?, ?)",
+                    (user["id"], item, target_id, today))
+        con.commit()
+        msgs = {
+            "wood": "Campfire+built+in+your+village!",
+            "pot": "Meal+cooked+on+the+table+today!",
+            "rod": "You+caught+a+fish+in+the+pond+today!",
+            "shield": "Guard+badge+hung+on+the+gate!",
+            "sword": "Brush+path+cleared!",
+        }
+        if item == "potion":
+            msg = "Sparkle+glow+on+%s+for+today!" % baby["name"].replace(
+                " ", "+")
+        elif item == "wand":
+            msg = "Wand+sparkle+waved+over+%s!" % baby["name"].replace(
+                " ", "+")
+        else:
+            msg = msgs[item]
+        self.redirect("/me?msg=%s" % msg)
 
     def do_play_move(self, con, user):
         if not user:

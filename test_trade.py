@@ -3784,6 +3784,79 @@ def main():
             check("chat has a mic button for voice typing",
                   "id='micbtn'" in live4 and "toggleMic" in live4
                   and "SpeechRecognition" in live4)
+            sh_id = pcongs.execute(
+                "SELECT id FROM users WHERE username='shelfy'"
+                ).fetchone()[0]
+            sh2_id = pcongs.execute(
+                "SELECT id FROM users WHERE username='shelfy2'"
+                ).fetchone()[0]
+            # The trade sections swapped the two starters, so look up
+            # who owns what now instead of trusting the old names.
+            sh_now = pcongs.execute(
+                "SELECT * FROM babies WHERE owner_id=?",
+                (sh_id,)).fetchone()
+            sh2_now = pcongs.execute(
+                "SELECT * FROM babies WHERE owner_id=?",
+                (sh2_id,)).fetchone()
+            for _it in ("wood", "pot", "rod", "potion", "shield",
+                        "wand", "sword"):
+                pcongs.execute("INSERT OR IGNORE INTO player_items "
+                               "(user_id, item) VALUES (?, ?)",
+                               (sh_id, _it))
+            pcongs.commit()
+            s, used = post(sh, "/item_use", {"item": "wood"},
+                           base=pbase)
+            check("using wood builds a campfire in the village",
+                  "Campfire built" in used and "🔥" in used)
+            s, used2 = post(sh, "/item_use", {"item": "wood"},
+                            base=pbase)
+            check("a second campfire is refused",
+                  "already built" in used2)
+            s, used3 = post(sh, "/item_use", {"item": "pot"},
+                            base=pbase)
+            check("using the pot puts a meal on the table",
+                  "Meal cooked" in used3
+                  and "Meal on the table today" in used3)
+            s, used4 = post(sh, "/item_use", {"item": "rod"},
+                            base=pbase)
+            check("using the rod puts a fish in the pond",
+                  "caught a fish" in used4
+                  and "Fish in the pond today" in used4)
+            s, used5 = post(sh, "/item_use",
+                            {"item": "potion",
+                             "baby_id": str(sh_now["id"])}, base=pbase)
+            check("using the potion sparkles one baby for the day",
+                  "Sparkle glow" in used5 and "Sparkling today" in used5)
+            s, used6 = post(sh, "/item_use", {"item": "shield"},
+                            base=pbase)
+            check("using the shield hangs a guard badge",
+                  "Guard badge" in used6
+                  and "Guard badge on the gate" in used6)
+            s, used7 = post(sh, "/item_use",
+                            {"item": "wand",
+                             "baby_id": str(sh_now["id"])}, base=pbase)
+            check("using the wand sparkles a baby's card",
+                  "Wand sparkle" in used7)
+            s, used8 = post(sh, "/item_use", {"item": "sword"},
+                            base=pbase)
+            check("using the sword clears a brush path",
+                  "Brush path cleared" in used8)
+            s, vil2 = get(anon, "/village", base=pbase)
+            check("village showcase shows the used items",
+                  "🔥" in vil2 and "Meal on the table today" in vil2
+                  and "Fish in the pond today" in vil2
+                  and "Guard badge on the gate" in vil2
+                  and "Brush path cleared" in vil2)
+            s, noown = post(sh2, "/item_use", {"item": "wood"},
+                            base=pbase)
+            check("using an item you do not own is refused",
+                  "do not own" in noown)
+            s, notmine = post(sh, "/item_use",
+                              {"item": "potion",
+                               "baby_id": str(sh2_now["id"])},
+                              base=pbase)
+            check("potion on another player's baby is refused",
+                  "your own babies" in notmine)
             s, dstate = get(anon, "/play_state", base=pbase)
             dplayers = {p["username"]: p
                         for p in json.loads(dstate)["players"]}
