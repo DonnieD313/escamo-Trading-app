@@ -5153,18 +5153,19 @@ class Handler(BaseHTTPRequestHandler):
                 "text-align:center'><a href='/login'>Log in</a> or "
                 "<a href='/signup'>sign up</a> to walk around and "
                 "chat — you can watch everyone else meanwhile.</div>")
-        def blocky_tree(lx, ty):
+        # Play-scene-style trees: round leafy emoji, gently swaying,
+        # scattered around the field where the blocky trees stood.
+        def field_tree(lx, ty, emoji):
             return ("<div style='position:absolute;left:%d%%;top:%d%%;"
-                    "width:44px;margin-left:-22px;text-align:center'"
-                    " aria-hidden='true'>"
-                    "<div class='canopy' style='width:36px;height:28px;background:#1e7a34;"
-                    "border:3px solid #14532d;border-radius:4px;margin:0 auto'></div>"
-                    "<div style='width:10px;height:18px;background:#7a4a21;"
-                    "margin:0 auto'></div></div>" % (lx, ty))
-        trees = "".join(blocky_tree(lx, ty) for lx, ty in
-                         [(6, 40), (92, 42), (20, 58), (80, 60),
-                          (58, 88), (12, 80), (88, 80), (38, 50),
-                          (65, 45), (30, 75), (55, 65), (75, 85)])
+                    "transform:translate(-50%%,-50%%)' aria-hidden='true'>"
+                    "<span class='swaytree' style='display:inline-block;"
+                    "font-size:48px;line-height:1'>%s</span></div>"
+                    % (lx, ty, emoji))
+        trees = "".join(field_tree(lx, ty, em) for (lx, ty), em in
+                         zip([(6, 40), (92, 42), (20, 58), (80, 60),
+                              (58, 88), (12, 80), (88, 80), (38, 50),
+                              (65, 45), (30, 75), (55, 65), (75, 85)],
+                             ["🌳", "🌲"] * 6))
         ground = ("<div style='position:absolute;left:0;top:0;width:100%;"
                   "height:100%;background-color:#4d7a2e;background-image:"
                   "url(/img/forest-floor.jpg);background-size:500px auto;"
@@ -5227,7 +5228,7 @@ class Handler(BaseHTTPRequestHandler):
                 "@keyframes bob{from{transform:translateY(0)}to{transform:translateY(-4px)}} "
                 ".walking .bob{animation:bob .6s ease-in-out infinite alternate} "
                 "@keyframes drift{from{left:-12%}to{left:112%}} "
-                ".canopy{animation:sway 3.2s ease-in-out infinite alternate;transform-origin:50% 100%} "
+                ".swaytree{animation:sway 3.2s ease-in-out infinite alternate;transform-origin:50% 100%} "
                 "@keyframes sway{from{transform:rotate(-2deg)}to{transform:rotate(2deg)}} "
                 ".idle{animation:bob 1.6s ease-in-out infinite alternate} "
                 "@keyframes bob{from{transform:translate(-50%,-50%)}"
@@ -5314,8 +5315,8 @@ class Handler(BaseHTTPRequestHandler):
                 "if(cd){cd.textContent='🎒 '+(st.carried||[]).join(' ');}var cb=document.getElementById('coinbal');if(cb&&st.coins!==undefined){cb.textContent='🪙 '+st.coins;}"
                 "document.getElementById('chatlog').innerHTML="
                 "st.messages.map(function(m){return '<b>'+esc("
-                "m.username)+':</b> '+esc(m.text);}).join('<br>');}"
-                "var mep=(st.players||[]).filter(function(p){return p.you;})[0];var mx=mep?mep.x:50;var my=mep?mep.y:50;var cx=Math.max(-100,Math.min(0,50-2*mx));var cy=Math.max(-100,Math.min(0,50-2*my));var w=document.getElementById('world');if(w){w.style.left=cx+'%';w.style.top=cy+'%';}window._CAMX=cx;window._CAMY=cy;"
+                "m.username)+':</b> '+esc(m.text);}).join('<br>');"
+                "var mep=(st.players||[]).filter(function(p){return p.you;})[0];var mx=mep?mep.x:50;var my=mep?mep.y:50;var cx=Math.max(-100,Math.min(0,50-2*mx));var cy=Math.max(-100,Math.min(0,50-2*my));var w=document.getElementById('world');if(w){w.style.left=cx+'%';w.style.top=cy+'%';}window._CAMX=cx;window._CAMY=cy;}"
                 "function poll(){fetch('/play_state').then(function(r)"
                 "{return r.json();}).then(render);}"
                 "function move(dx,dy){if(!ME||!POS){return;}"

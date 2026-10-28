@@ -31,6 +31,67 @@ def check(label, cond, detail=""):
         fails.append(label)
 
 
+# Node harness for the /live script regression test: stubs out the DOM
+# and fetch, runs the page's own script against a real play_state feed,
+# and reports whether players actually paint.
+_HARNESS = r"""
+const fs = require('fs');
+const liveState = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+const script = fs.readFileSync(process.argv[2], 'utf8');
+class El {
+  constructor(id) { this.id = id; this.style = {}; this._html = ''; this.textContent = ''; this.value = ''; }
+  set innerHTML(v) { this._html = v; }
+  get innerHTML() { return this._html; }
+  addEventListener() {}
+  getAttribute(n) { return n === 'data-pname' ? 'x' : null; }
+  closest() { return null; }
+  getBoundingClientRect() { return {left:0, top:0, width:100, height:100}; }
+  querySelector(sel) {
+    if (sel === 'img') {
+      const m = /<img[^>]+src='([^']+)'/.exec(this._html || '');
+      return m ? { getAttribute: () => m[1] } : null;
+    }
+    return null;
+  }
+  appendChild() {}
+  focus() {}
+}
+const els = {};
+function getEl(id) { if (!els[id]) els[id] = new El(id); return els[id]; }
+const ABSENT = new Set(['carried','coinbal','chatform','sysmsg','popup-banner','selpanel','chatin','me-ava']);
+global.document = {
+  getElementById: (id) => ABSENT.has(id) ? null : getEl(id),
+  createElement: () => new El('tmp'),
+  createTextNode: (t) => ({text: t}),
+  addEventListener: () => {},
+  activeElement: null,
+};
+global.window = global;
+global.localStorage = { getItem: () => null, setItem: () => {} };
+global.fetch = (url) => {
+  if (String(url).includes('popup_banner')) return Promise.resolve({ json: () => Promise.resolve({active:false}) });
+  return Promise.resolve({ json: () => Promise.resolve(liveState) });
+};
+global.setInterval = () => 0;
+let unhandled = null;
+process.on('unhandledRejection', (e) => { unhandled = e; });
+try {
+  eval(script);
+  console.log('SCRIPT EVAL OK');
+} catch (e) {
+  console.log('SCRIPT EVAL THREW:', e && e.message);
+  process.exit(0);
+}
+setTimeout(() => {
+  if (unhandled) console.log('UNHANDLED REJECTION:', unhandled && unhandled.message);
+  const p = els['players'], it = els['items'];
+  console.log('players painted:', !!p, 'len:', p ? p._html.length : 0);
+  if (p) for (const pl of (liveState.players || [])) console.log('  contains ' + pl.username + ' : ' + p._html.includes(pl.username));
+  console.log('items painted:', !!it, 'len:', it ? it._html.length : 0);
+}, 300);
+"""
+
+
 def csrf_token_for(jar, base=BASE):
     """Fetch a page so the jar holds a CSRF cookie, then return it."""
     get(jar, "/", base=base)
@@ -3248,11 +3309,41 @@ def main():
             # (m) Live World: move around together + chat.
             s, live = get(anon, "/live", base=pbase)
             check("live world page loads with field and controls",
-                  "Live World" in live and "#1e7a34" in live
+                  "Live World" in live and "🌳" in live
                   and "play_state" in live)
             check("live layout stacks without fixed overlays",
                   "100dvh" in live and "flex:1" in live
                   and "position:fixed" not in live)
+            # (m2) The /live script must RUN, not just parse. A scoping
+            # slip once left the camera code outside render(), so the
+            # whole script died at load and nothing ever painted.
+            # Execute it in node against the real play_state feed.
+            import shutil as _shutil
+            import tempfile as _tf
+            _node = _shutil.which("node")
+            _m = re.search(r"<script>(.*?)</script>", live, re.S)
+            s, _st = get(anon, "/play_state", base=pbase)
+            _paint_ok = False
+            if _node and _m:
+                _dir = _tf.mkdtemp()
+                _sp_js = _dir + "/live_script.js"
+                _st_js = _dir + "/live_state.json"
+                _h_js = _dir + "/live_harness.js"
+                open(_sp_js, "w").write(_m.group(1))
+                open(_st_js, "w").write(_st)
+                open(_h_js, "w").write(_HARNESS)
+                _out = subprocess.run([_node, _h_js, _sp_js, _st_js],
+                                      capture_output=True, text=True,
+                                      timeout=30)
+                _names = [p["username"] for p in
+                          json.loads(_st).get("players", [])]
+                _paint_ok = ("SCRIPT EVAL OK" in _out.stdout
+                             and "THREW" not in _out.stdout
+                             and "UNHANDLED" not in _out.stdout
+                             and all(("contains " + n + " : true")
+                                     in _out.stdout for n in _names))
+            check("live script runs and paints players from play_state",
+                  _paint_ok)
             s, moved = post(sh, "/play_move",
                             {"x": "30", "y": "40"}, base=pbase)
             check("signed-in move is accepted",
@@ -3358,7 +3449,9 @@ def main():
                   and "width:60px;height:38px" not in liveb
                   and "class='bob'" in liveb)
             check("forest floor photo tiled, trees, no houses",
-                  "#1e7a34" in liveb and "#4d7a2e" in liveb
+                  "🌳" in liveb and "swaytree" in liveb
+                  and "class='canopy'" not in liveb
+                  and "#4d7a2e" in liveb
                   and "background-image:url(/img/forest-floor.jpg);background-size:500px auto" in liveb
                   and "url('/img/forest-floor.jpg')" not in liveb
                   and "hide here" not in liveb
