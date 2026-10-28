@@ -21,6 +21,7 @@ import hashlib
 import hmac
 import html
 import json
+import math
 import os
 import random
 import re
@@ -303,6 +304,22 @@ INVITE_BONUS = 20
 # Villages: a village is complete at 40 babies owned, not counting
 # leaders. Drifters, specials, rares, Shadows, and gods all count.
 VILLAGE_SIZE = 40
+
+# Villains: roaming NPCs that can never be bought, owned, or traded.
+# Snatcher wanders the Live field on a slow path (same for every
+# viewer, since it comes from the clock) and steals loose field coins,
+# which respawn elsewhere, so the field never runs dry.
+VILLAIN = {"name": "Snatcher", "img": "/img/villain-thief.jpg"}
+_VILLAIN_LAST_STEAL = 0
+
+
+def villain_pos():
+    now = time.time()
+    return {"name": VILLAIN["name"],
+            "x": round(50 + 35 * math.sin(now / 47.0), 2),
+            "y": round(50 + 28 * math.sin(now / 61.0 + 1.0), 2),
+            "img": VILLAIN["img"]}
+
 
 # Second objective of the game, besides trading: players collect
 # coins in the Live World field and spend them to build their
@@ -1040,6 +1057,11 @@ def init_db():
         x INTEGER NOT NULL,
         y INTEGER NOT NULL
     )""")
+    field_cols = [r[1] for r in
+                  con.execute("PRAGMA table_info(field_items)").fetchall()]
+    if "origin" not in field_cols:
+        con.execute("ALTER TABLE field_items ADD COLUMN origin TEXT "
+                    "NOT NULL DEFAULT 'seed'")
     con.execute("""
     CREATE TABLE IF NOT EXISTS carried_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -5121,8 +5143,8 @@ class Handler(BaseHTTPRequestHandler):
                         "VALUES (?, ?)", (user["id"], it["kind"]))
         nx = (it["id"] * 37 + 11) % 83 + 8
         ny = (it["id"] * 53 + 29) % 70 + 8
-        con.execute("INSERT INTO field_items (kind, x, y) "
-                    "VALUES (?, ?, ?)", (it["kind"], nx, ny))
+        con.execute("INSERT INTO field_items (kind, x, y, origin) "
+                    "VALUES (?, ?, ?, 'respawn')", (it["kind"], nx, ny))
         con.commit()
         bal = con.execute("SELECT coins FROM users WHERE id=?",
                           (user["id"],)).fetchone()[0]
@@ -5204,6 +5226,27 @@ class Handler(BaseHTTPRequestHandler):
             "DESC LIMIT 20").fetchall()
         msgs.reverse()
         players = self._live_players(con, user)
+        villain = villain_pos()
+        villain_msg = ""
+        global _VILLAIN_LAST_STEAL
+        now = time.time()
+        if now - _VILLAIN_LAST_STEAL > 45:
+            for it in con.execute(
+                    "SELECT * FROM field_items WHERE kind=? AND "
+                    "origin='respawn'", ("\U0001fa99",)).fetchall():
+                if (abs(it["x"] - villain["x"]) <= 12
+                        and abs(it["y"] - villain["y"]) <= 12):
+                    con.execute("DELETE FROM field_items WHERE id=?",
+                                (it["id"],))
+                    nx = (it["id"] * 37 + 11) % 83 + 8
+                    ny = (it["id"] * 53 + 29) % 70 + 8
+                    con.execute("INSERT INTO field_items (kind, x, y, "
+                                "origin) VALUES (?, ?, ?, 'respawn')",
+                                ("\U0001fa99", nx, ny))
+                    _VILLAIN_LAST_STEAL = now
+                    villain_msg = ("\U0001f608 Snatcher stole a coin "
+                                   "from the field!")
+                    break
         con.commit()
         items = con.execute(
             "SELECT kind, x, y FROM field_items").fetchall()
@@ -5218,6 +5261,8 @@ class Handler(BaseHTTPRequestHandler):
                                 (user["id"],)).fetchone()[0] or 0
         self.send_json({
             "players": players,
+            "villain": villain,
+            "villain_msg": villain_msg,
             "coins": coins,
             "items": [{"kind": it["kind"], "x": it["x"],
                       "y": it["y"]} for it in items],
@@ -5472,7 +5517,9 @@ class Handler(BaseHTTPRequestHandler):
                 "border-radius:10px;padding:4px 8px;font-size:13px;"
                 "max-width:160px'>\"+esc(p.bubble)+\"</div>\":'';"
                 "h+=\"<div \"+(p.you?\"id='me-ava' \":\"\")+\"data-pname='\"+esc(p.username)+\"' class='\"+(moved?\"walking\":\"idle\")+\"' style='position:absolute;transition:left .6s linear,top .6s linear;left:\"+p.x+\"%;top:\"+p.y+\"%;transform:translate(-50%,-50%);text-align:center'>\"+bub+\"<div>\"+babyHTML(p)+\"</div><div style='background:#fdf6e3;border:2px solid #d4af37;border-radius:8px;padding:1px 6px;font-size:11px'>\"+dot+\"<a href='/shelf/\"+encodeURIComponent(p.username)+\"'>\"+esc(p.username)+\"</a>\"+(p.you?\" (You)\":\"\")+\"</div></div>\";});"
-                "document.getElementById('players').innerHTML=h;"
+                "if(st.villain){var v=st.villain;"
+"h+=\"<div data-villain='1' style='position:absolute;transition:left .6s linear,top .6s linear;left:\"+v.x+\"%;top:\"+v.y+\"%;transform:translate(-50%,-50%);text-align:center'>\"+\"<img src='\"+v.img+\"' style='width:76px;height:76px;object-fit:cover;border:3px solid #111;border-radius:14px;display:block;margin:0 auto;box-shadow:0 4px 8px rgba(0,0,0,.45)'>\"+\"<div style='width:52px;height:10px;background:rgba(0,0,0,.3);border-radius:50%;margin:3px auto 0'></div>\"+\"<div style='background:#222;border:2px solid #d4af37;border-radius:8px;padding:1px 6px;font-size:11px;color:#fdf6e3'>😈 \"+esc(v.name)+\"</div></div>\";}"
+"document.getElementById('players').innerHTML=h;"
                 "document.getElementById('items').innerHTML="
                 "(st.items||[]).map(function(it){return \"<div "
                 "style='position:absolute;left:\"+it.x+\"%;top:\"+it.y+"
@@ -5483,6 +5530,7 @@ class Handler(BaseHTTPRequestHandler):
                 "document.getElementById('chatlog').innerHTML="
                 "st.messages.map(function(m){return '<b>'+esc("
                 "m.username)+':</b> '+esc(m.text);}).join('<br>');"
+                "if(st.villain_msg){var vm=document.getElementById('sysmsg');if(vm){vm.textContent=st.villain_msg;}}"
                 "var mep=(st.players||[]).filter(function(p){return p.you;})[0];var mx=mep?mep.x:50;var my=mep?mep.y:50;var cx=Math.max(-100,Math.min(0,50-2*mx));var cy=Math.max(-100,Math.min(0,50-2*my));var w=document.getElementById('world');if(w){w.style.left=cx+'%';w.style.top=cy+'%';}window._CAMX=cx;window._CAMY=cy;}"
                 "function poll(){fetch('/play_state').then(function(r)"
                 "{return r.json();}).then(render);}"
@@ -5495,7 +5543,7 @@ class Handler(BaseHTTPRequestHandler):
                 "function pickup(){if(!ME){return;}var f=new URLSearchParams();f.append('csrf_token',CSRF);fetch('/pickup',{method:'POST',body:f}).then(function(r){return r.json();}).then(function(d){var m=document.getElementById('sysmsg');if(!d.ok){m.textContent='Nothing close enough to pick up — walk up to a flower, ball, star, or coin.';}else if(d.kind=='\U0001fa99'){m.textContent='You found a coin! +10 coins (total '+d.coins+').';}else{m.textContent='You picked up '+d.kind+'!';}poll();});}"
                 "function wave(n){var f=new URLSearchParams();f.append('csrf_token',CSRF);f.append('target',n);fetch('/play_wave',{method:'POST',body:f}).then(function(){poll();});}"
                 "function talkTo(n){var inp=document.getElementById('chatin');if(inp){inp.value='@'+n+' ';inp.focus();}}"
-                "function pickSel(t){var pn=t?t.closest('[data-pname]'):null;var sp=document.getElementById('selpanel');if(!sp){return;}if(pn){var n=pn.getAttribute('data-pname');if(n===ME){sp.style.display='none';return;}sp.style.display='block';sp.innerHTML='<b>'+esc(n)+'</b> <button onclick=\"wave(\\''+n+'\\')\">👋 Wave</button> <button onclick=\"talkTo(\\''+n+'\\')\">💬 Talk</button> <a href=\"/shelf/'+encodeURIComponent(n)+'\">Visit shelf</a> <a href=\"/trading\">Trade</a>';}else{sp.style.display='none';}}"
+                "function pickSel(t){var vn=t?t.closest('[data-villain]'):null;if(vn){var vm=document.getElementById('sysmsg');if(vm){vm.textContent='Snatcher wants your hoodie! It roams the village stealing food and goods. It cannot be bought or owned.';}var sp2=document.getElementById('selpanel');if(sp2){sp2.style.display='none';}return;}var pn=t?t.closest('[data-pname]'):null;var sp=document.getElementById('selpanel');if(!sp){return;}if(pn){var n=pn.getAttribute('data-pname');if(n===ME){sp.style.display='none';return;}sp.style.display='block';sp.innerHTML='<b>'+esc(n)+'</b> <button onclick=\"wave(\\''+n+'\\')\">👋 Wave</button> <button onclick=\"talkTo(\\''+n+'\\')\">💬 Talk</button> <a href=\"/shelf/'+encodeURIComponent(n)+'\">Visit shelf</a> <a href=\"/trading\">Trade</a>';}else{sp.style.display='none';}}"
                 "document.addEventListener('keydown',function(e){"
                 "if(document.activeElement&&document.activeElement"
                 ".id==='chatin'){return;}"

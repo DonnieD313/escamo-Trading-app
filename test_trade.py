@@ -3691,6 +3691,23 @@ def main():
                               base=pbase)
             check("coin shop refuses an unknown item",
                   "Unknown item." in unknown)
+            s, vstate = get(anon, "/play_state", base=pbase)
+            vj = json.loads(vstate)
+            check("villain roams in play state and is not a player",
+                  vj.get("villain", {}).get("name") == "Snatcher"
+                  and vj["villain"]["img"] == "/img/villain-thief.jpg"
+                  and 0 <= vj["villain"]["x"] <= 100
+                  and 0 <= vj["villain"]["y"] <= 100
+                  and "Snatcher" not in
+                  [p["username"] for p in vj["players"]])
+            vreq = urllib.request.Request(
+                pbase + "/img/villain-thief.jpg")
+            with urllib.request.urlopen(vreq) as r:
+                vimg_status, vimg_bytes = r.status, r.read()
+            check("villain image is served",
+                  vimg_status == 200 and len(vimg_bytes) > 10000)
+            check("villain cannot be bought in the coin shop",
+                  "Snatcher" not in anonshop)
             s, dstate = get(anon, "/play_state", base=pbase)
             dplayers = {p["username"]: p
                         for p in json.loads(dstate)["players"]}
