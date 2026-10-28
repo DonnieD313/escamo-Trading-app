@@ -3519,10 +3519,10 @@ def main():
             s, oldhit = post(sh, "/play_hit", {"target": "shelfy2"},
                              base=pbase)
             check("old fight route is gone", s == 404)
-            # (o) Tribe villages, touch-to-move, trading room.
+            # (o) Tribe villages, joystick move, trading room.
             check("live page has touch controls, photo babies and "
                   "villages",
-                  "touchstart" in live and "p.avatar" in live
+                  "pointerdown" in live and "p.avatar" in live
                   and "me-ava" in live
                   and "Fortress Rooted village" in live
                   and "zonelabel" in live)
@@ -3784,6 +3784,10 @@ def main():
             check("chat has a mic button for voice typing",
                   "id='micbtn'" in live4 and "toggleMic" in live4
                   and "SpeechRecognition" in live4)
+            check("joystick uses pointer capture so it cannot stick",
+                  "pointerdown" in live4 and "setPointerCapture" in live4
+                  and "pointercancel" in live4
+                  and "touchstart" not in live4)
             sh_id = pcongs.execute(
                 "SELECT id FROM users WHERE username='shelfy'"
                 ).fetchone()[0]
