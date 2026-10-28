@@ -312,10 +312,13 @@ VILLAGE_SIZE = 40
 # which respawn elsewhere, so the field never runs dry.
 VILLAIN = {"name": "Snatcher", "img": "/img/villain-thief.jpg"}
 _VILLAIN_LAST_STEAL = 0
+_VILLAIN_SCARED_UNTIL = 0
 
 
 def villain_pos():
     now = time.time()
+    if now < _VILLAIN_SCARED_UNTIL:
+        return None
     return {"name": VILLAIN["name"],
             "x": round(50 + 35 * math.sin(now / 47.0), 2),
             "y": round(50 + 28 * math.sin(now / 61.0 + 1.0), 2),
@@ -2589,6 +2592,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.do_play_wave(con, user)
             elif path == "/pickup":
                 self.do_pickup(con, user)
+            elif path == "/putdown":
+                self.do_putdown(con, user)
+            elif path == "/punch":
+                self.do_punch(con, user)
             elif path == "/build_buy":
                 self.do_build_buy(con, user)
             elif path == "/coinshop_buy":
@@ -5174,6 +5181,64 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"ok": True, "kind": it["kind"],
                         "coins": bal or 0})
 
+    def do_putdown(self, con, user):
+        """Drop the most recently carried field item at your feet."""
+        if not user:
+            self.send_json({"ok": False, "error": "login required"},
+                           403)
+            return
+        row = con.execute("SELECT * FROM carried_items WHERE user_id=? "
+                          "ORDER BY id DESC LIMIT 1",
+                          (user["id"],)).fetchone()
+        if not row:
+            self.send_json({"ok": False, "error": "empty"})
+            return
+        prow = con.execute("SELECT * FROM player_positions WHERE "
+                           "user_id=?", (user["id"],)).fetchone()
+        if prow:
+            px, py = prow["x"], prow["y"]
+        else:
+            px, py = self._spawn(user["id"], user_tribe(con, user))
+        con.execute("DELETE FROM carried_items WHERE id=?",
+                    (row["id"],))
+        con.execute("INSERT INTO field_items (kind, x, y, origin) "
+                    "VALUES (?, ?, ?, 'dropped')",
+                    (row["kind"], max(0, min(92, int(round(px)))),
+                     max(0, min(85, int(round(py))))))
+        con.commit()
+        self.send_json({"ok": True, "kind": row["kind"]})
+
+    def do_punch(self, con, user):
+        """Punch Snatcher to chase him off: if he is near you, he
+        drops a coin at his feet and hides for 60 seconds."""
+        if not user:
+            self.send_json({"ok": False, "error": "login required"},
+                           403)
+            return
+        villain = villain_pos()
+        if villain is None:
+            self.send_json({"ok": False, "error": "gone"})
+            return
+        prow = con.execute("SELECT * FROM player_positions WHERE "
+                           "user_id=?", (user["id"],)).fetchone()
+        if prow:
+            px, py = prow["x"], prow["y"]
+        else:
+            px, py = self._spawn(user["id"], user_tribe(con, user))
+        if (abs(villain["x"] - px) > 15
+                or abs(villain["y"] - py) > 15):
+            self.send_json({"ok": False, "error": "too_far"})
+            return
+        global _VILLAIN_SCARED_UNTIL
+        _VILLAIN_SCARED_UNTIL = time.time() + 60
+        con.execute("INSERT INTO field_items (kind, x, y, origin) "
+                    "VALUES (?, ?, ?, 'dropped')",
+                    ("\U0001fa99",
+                     max(0, min(92, int(round(villain["x"])))),
+                     max(0, min(85, int(round(villain["y"]))))))
+        con.commit()
+        self.send_json({"ok": True})
+
     def do_build_buy(self, con, user):
         if self.need_login(user):
             return
@@ -5253,7 +5318,7 @@ class Handler(BaseHTTPRequestHandler):
         villain_msg = ""
         global _VILLAIN_LAST_STEAL
         now = time.time()
-        if now - _VILLAIN_LAST_STEAL > 45:
+        if villain is not None and now - _VILLAIN_LAST_STEAL > 45:
             for it in con.execute(
                     "SELECT * FROM field_items WHERE kind=? AND "
                     "origin='respawn'", ("\U0001fa99",)).fetchall():
@@ -5371,11 +5436,25 @@ class Handler(BaseHTTPRequestHandler):
                 "gap:8px;justify-content:center;flex-wrap:wrap'>"
                 "<button onclick='pickup()' "
                 "style='padding:10px 18px;font-size:18px'>✋ Pick up"
+                "</button><button onclick='putdown()' "
+                "style='padding:10px 18px;font-size:18px'>👇 Put down"
+                "</button><button onclick='punch()' "
+                "style='padding:10px 18px;font-size:18px'>👊 Punch"
                 "</button><span id='carried' "
                 "style='font-size:20px;align-self:center;color:#fdf6e3'"
                 "></span><span id='coinbal' "
                 "style='font-size:20px;align-self:center;color:#fdf6e3'"
                 "></span></div>"
+                "<div style='text-align:center;margin-top:8px'>"
+                "<div id='joy' style='width:110px;height:110px;"
+                "border-radius:50%;background:#0d3b38;"
+                "border:3px solid #d4af37;position:relative;"
+                "margin:0 auto;touch-action:none'>"
+                "<div id='knob' style='width:48px;height:48px;"
+                "border-radius:50%;background:#d4af37;position:absolute;"
+                "left:31px;top:31px'></div></div>"
+                "<div style='font-size:12px;color:#fdf6e3'>Push to move"
+                "</div></div>"
                 "<form id='chatform' style='display:flex;gap:6px;"
                 "margin-top:6px'><input id='chatin' maxlength='200' "
                 "placeholder='Say something to the village…' "
@@ -5569,6 +5648,8 @@ class Handler(BaseHTTPRequestHandler):
                 "CSRF);f.append('x',POS.x);f.append('y',POS.y);"
                 "fetch('/play_move',{method:'POST',body:f});poll();}"
                 "function pickup(){if(!ME){return;}var f=new URLSearchParams();f.append('csrf_token',CSRF);fetch('/pickup',{method:'POST',body:f}).then(function(r){return r.json();}).then(function(d){var m=document.getElementById('sysmsg');if(!d.ok){m.textContent='Nothing close enough to pick up — walk up to a flower, ball, star, or coin.';}else if(d.kind=='\U0001fa99'){m.textContent='You found a coin! +10 coins (total '+d.coins+').';}else{m.textContent='You picked up '+d.kind+'!';}poll();});}"
+                "function putdown(){if(!ME){return;}var f=new URLSearchParams();f.append('csrf_token',CSRF);fetch('/putdown',{method:'POST',body:f}).then(function(r){return r.json();}).then(function(d){var m=document.getElementById('sysmsg');if(!d.ok){m.textContent='You are not carrying anything to put down.';}else{m.textContent='You put down '+d.kind+'.';}poll();});}"
+                "function punch(){if(!ME){return;}var f=new URLSearchParams();f.append('csrf_token',CSRF);fetch('/punch',{method:'POST',body:f}).then(function(r){return r.json();}).then(function(d){var m=document.getElementById('sysmsg');if(!d.ok){if(d.error==='too_far'){m.textContent='Snatcher is too far away \u2014 get closer, then punch!';}else if(d.error==='gone'){m.textContent='Snatcher already ran off!';}else{m.textContent='You cannot punch right now.';}}else{m.textContent='You punched Snatcher! He dropped a coin and ran off!';}poll();});}"
                 "function wave(n){var f=new URLSearchParams();f.append('csrf_token',CSRF);f.append('target',n);fetch('/play_wave',{method:'POST',body:f}).then(function(){poll();});}"
                 "function talkTo(n){var inp=document.getElementById('chatin');if(inp){inp.value='@'+n+' ';inp.focus();}}"
                 "function pickSel(t){var vn=t?t.closest('[data-villain]'):null;if(vn){var vm=document.getElementById('sysmsg');if(vm){vm.textContent='Snatcher wants your hoodie! It roams the village stealing food and goods. It cannot be bought or owned.';}var sp2=document.getElementById('selpanel');if(sp2){sp2.style.display='none';}return;}var pn=t?t.closest('[data-pname]'):null;var sp=document.getElementById('selpanel');if(!sp){return;}if(pn){var n=pn.getAttribute('data-pname');if(n===ME){sp.style.display='none';return;}sp.style.display='block';sp.innerHTML='<b>'+esc(n)+'</b> <button onclick=\"wave(\\''+n+'\\')\">👋 Wave</button> <button onclick=\"talkTo(\\''+n+'\\')\">💬 Talk</button> <a href=\"/shelf/'+encodeURIComponent(n)+'\">Visit shelf</a> <a href=\"/trading\">Trade</a>';}else{sp.style.display='none';}}"
@@ -5580,30 +5661,10 @@ class Handler(BaseHTTPRequestHandler):
                 "if(e.key==='ArrowLeft'){move(-4,0);}"
                 "if(e.key==='ArrowRight'){move(4,0);}});"
                 "var fld=document.getElementById('field');"
-                "var lastGo=0;var lastTX=0;var lastTY=0;"
-                "function goTo(cx,cy,force){if(!ME||!POS){return;}"
-                "var r=fld.getBoundingClientRect();"
-                "var px=(cx-r.left)/r.width*100;var py=(cy-r.top)/r.height*100;"
-                "var wx=(px-(window._CAMX||-50))/2;var wy=(py-(window._CAMY||-50))/2;"
-                "POS.x=Math.max(0,Math.min(92,wx));"
-                "POS.y=Math.max(0,Math.min(85,wy));"
-                "lastTX=cx;lastTY=cy;var now=Date.now();var me=document.getElementById('me-ava');if(me){me.style.left=POS.x+'%';me.style.top=POS.y+'%';}"
-                "if(!force&&now-lastGo<400){return;}lastGo=now;"
-                "var f=new URLSearchParams();f.append('csrf_token',"
-                "CSRF);f.append('x',POS.x);f.append('y',POS.y);"
-                "fetch('/play_move',{method:'POST',body:f});poll();}"
-                "fld.addEventListener('touchstart',function(e){"
-                "if(e.target.closest('button')){return;}var t=e.touches[0];"
-                "goTo(t.clientX,t.clientY);e.preventDefault();},"
-                "{passive:false});"
-                "fld.addEventListener('touchmove',function(e){"
-                "if(e.target.closest('button')){return;}var t=e.touches[0];"
-                "goTo(t.clientX,t.clientY);e.preventDefault();},"
-                "{passive:false});"
                 "fld.addEventListener('touchend',function(e){"
-                "goTo(lastTX,lastTY,true);pickSel(e.target);});"
+                "pickSel(e.target);});"
                 "fld.addEventListener('click',function(e){"
-                "if(e.target.closest('button')){return;}goTo(e.clientX,e.clientY);pickSel(e.target);});"
+                "if(e.target.closest('button')){return;}pickSel(e.target);});"
                 "var cf=document.getElementById('chatform');"
                 "if(cf){cf.addEventListener('submit',function(e){"
                 "e.preventDefault();var inp=document.getElementById"
@@ -5611,6 +5672,18 @@ class Handler(BaseHTTPRequestHandler):
                 "f.append('csrf_token',CSRF);f.append('text',inp.value);"
                 "fetch('/play_chat',{method:'POST',body:f}).then("
                 "function(){inp.value='';poll();});});}"
+                "function joyInit(){var j=document.getElementById('joy');if(!j){return;}var k=document.getElementById('knob');var act=false;var vx=0,vy=0;var last=0;"
+                "function upd(e){var r=j.getBoundingClientRect();var t=e.touches?e.touches[0]:e;var dx=t.clientX-(r.left+r.width/2);var dy=t.clientY-(r.top+r.height/2);var d=Math.sqrt(dx*dx+dy*dy);var m=d>40?40:d;if(d>0){dx=dx/d*m;dy=dy/d*m;}k.style.left=(31+dx)+'px';k.style.top=(31+dy)+'px';vx=m>8?dx/40:0;vy=m>8?dy/40:0;}"
+                "function tick(){if(!act||!POS){return;}if(vx||vy){POS.x=Math.max(0,Math.min(92,POS.x+vx*3));POS.y=Math.max(0,Math.min(85,POS.y+vy*3));var n=Date.now();if(n-last>300){last=n;var f=new URLSearchParams();f.append('csrf_token',CSRF);f.append('x',POS.x);f.append('y',POS.y);fetch('/play_move',{method:'POST',body:f});poll();}}}"
+                "j.addEventListener('touchstart',function(e){if(!ME||!POS){return;}act=true;e.preventDefault();upd(e);},{passive:false});"
+                "j.addEventListener('touchmove',function(e){if(act){e.preventDefault();upd(e);}},{passive:false});"
+                "function joyEnd(){act=false;vx=0;vy=0;k.style.left='31px';k.style.top='31px';}"
+                "j.addEventListener('touchend',joyEnd);j.addEventListener('touchcancel',joyEnd);"
+                "j.addEventListener('mousedown',function(e){if(!ME||!POS){return;}act=true;upd(e);});"
+                "document.addEventListener('mousemove',function(e){if(act){upd(e);}});"
+                "document.addEventListener('mouseup',joyEnd);"
+                "setInterval(tick,150);}"
+                "joyInit();"
                 "poll();setInterval(poll,2000);fetch('/popup_banner').then(function(r){return r.json();}).then(function(d){if(!d.active){return;}if(localStorage.getItem('popup_seen')===d.cert){return;}var b=document.getElementById('popup-banner');var bar=document.createElement('div');bar.style.cssText='background:#f5c542;padding:10px;text-align:center;font-weight:bold';bar.textContent='🎉 A pop-up has arrived: '+d.name+'! ';var a=document.createElement('a');a.href='/shop';a.textContent='See it in the Shop';bar.appendChild(a);var x=document.createElement('button');x.textContent=' × ';x.onclick=function(){localStorage.setItem('popup_seen',d.cert);b.innerHTML='';};bar.appendChild(document.createTextNode(' '));bar.appendChild(x);b.appendChild(bar);});</script>"
                 "</body></html>")
         self.send_html(html)

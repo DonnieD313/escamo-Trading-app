@@ -3725,6 +3725,44 @@ def main():
             except urllib.error.HTTPError as e:
                 s = e.code
             check("audio route refuses bad filenames", s == 404)
+            s, live2 = get(sh, "/live", base=pbase)
+            check("live field has joystick and put-down and punch",
+                  "id='joy'" in live2 and "Put down" in live2
+                  and "Punch" in live2)
+            check("drag-to-move is gone from the live field",
+                  "goTo" not in live2)
+            s, put = post(sh, "/putdown", {}, base=pbase)
+            check("put down drops the carried flower at your feet",
+                  json.loads(put).get("ok") is True
+                  and json.loads(put).get("kind") == "🌸")
+            s, cstate = get(sh, "/play_state", base=pbase)
+            check("carried pile is empty after put down",
+                  "🌸" not in json.loads(cstate)["carried"])
+            s, put2 = post(sh, "/putdown", {}, base=pbase)
+            check("put down with nothing carried is refused",
+                  json.loads(put2).get("error") == "empty")
+            post(sh, "/play_move", {"x": "0", "y": "0"}, base=pbase)
+            s, far = post(sh, "/punch", {}, base=pbase)
+            check("punching Snatcher from far away is refused",
+                  json.loads(far).get("error") == "too_far")
+            s, vstate2 = get(anon, "/play_state", base=pbase)
+            vv = json.loads(vstate2)["villain"]
+            post(sh, "/play_move", {"x": str(vv["x"]), "y": str(vv["y"])},
+                 base=pbase)
+            s, pun = post(sh, "/punch", {}, base=pbase)
+            check("punching Snatcher up close chases him off",
+                  json.loads(pun).get("ok") is True)
+            s, vstate3 = get(anon, "/play_state", base=pbase)
+            vj3 = json.loads(vstate3)
+            check("Snatcher hides after a punch and drops a coin",
+                  vj3["villain"] is None
+                  and any(it["kind"] == "🪙"
+                          and abs(it["x"] - vv["x"]) <= 15
+                          and abs(it["y"] - vv["y"]) <= 15
+                          for it in vj3["items"]))
+            s, pun2 = post(sh, "/punch", {}, base=pbase)
+            check("punching while Snatcher is gone is refused",
+                  json.loads(pun2).get("error") == "gone")
             s, dstate = get(anon, "/play_state", base=pbase)
             dplayers = {p["username"]: p
                         for p in json.loads(dstate)["players"]}
