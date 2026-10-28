@@ -326,6 +326,38 @@ def village_pieces_str(con, user_id):
         if mark:
             parts.append("%s \u00d7 %d" % (mark, r["n"]))
     return " ".join(parts)
+
+
+# Coin Shop: villager goods bought with coins collected in the Live
+# World field (each coin pickup is worth 10). Prices are whole coins.
+COIN_SHOP_ITEMS = {
+    "wood": ("\U0001fab5", "Wood Bundle", 20,
+             "Wood for campfires and building."),
+    "pot": ("\U0001f372", "Cooking Pot", 30,
+            "Cook meals over your village fire."),
+    "potion": ("\U0001f9ea", "Magic Potion", 40,
+               "A bubbling potion for village magic."),
+    "rod": ("\U0001f3a3", "Fishing Rod", 50,
+            "Fish the village rivers."),
+    "shield": ("\U0001f6e1", "Shield", 60,
+               "A sturdy shield for a brave villager."),
+    "wand": ("\U0001fa84", "Magic Wand", 80,
+             "Cast spells around the village."),
+    "sword": ("\U0001f5e1", "Sword", 100,
+              "A fine sword for a village hero."),
+}
+
+
+def coin_items_str(con, user_id):
+    rows = con.execute(
+        "SELECT item, COUNT(*) AS n FROM player_items WHERE "
+        "user_id=? GROUP BY item ORDER BY item", (user_id,)).fetchall()
+    parts = []
+    for r in rows:
+        mark = COIN_SHOP_ITEMS.get(r["item"], ("", "", 0, ""))[0]
+        if mark:
+            parts.append("%s \u00d7 %d" % (mark, r["n"]))
+    return " ".join(parts)
 # Pop-up tiers: the weekly drifter plus limited-edition specials and
 # rares, and the weekly Shadow pop-up (a money purchase in the Shop).
 PRICE_SPECIAL = "2.50"
@@ -599,7 +631,8 @@ def delete_user_account(con, username):
         con.execute("DELETE FROM recolor_choices WHERE user_id=?", (uid,))
         con.execute("DELETE FROM recruit_choices WHERE user_id=?", (uid,))
     for table in ("monthly_gifts", "choice_claims", "purchases",
-                  "village_builds", "player_positions", "play_chat",
+                  "village_builds", "player_items", "player_positions",
+                  "play_chat",
                   "carried_items", "sessions"):
         con.execute("DELETE FROM %s WHERE user_id=?" % table, (uid,))
     con.execute("DELETE FROM babies WHERE owner_id=?", (uid,))
@@ -970,6 +1003,13 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL REFERENCES users(id),
         piece TEXT NOT NULL,
+        bought_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )""")
+    con.execute("""
+    CREATE TABLE IF NOT EXISTS player_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        item TEXT NOT NULL,
         bought_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
     # Live World: where each player stands in the shared field, and
@@ -1574,6 +1614,7 @@ def page(title, body, user=None):
                "<a href='/points_market'>Points Market</a> | "
                "<a href='/shelf'>My Shelf</a> | "
                "<a href='/shop'>Shop</a> | "
+               "<a href='/coinshop'>Coin Shop</a> | "
                "<a href='/purchases'>Purchases</a> | "
                "<a href='/world'>World</a> | "
                "<a href='/village'>Village</a> | "
@@ -1588,6 +1629,7 @@ def page(title, body, user=None):
         nav = ("<nav><a href='/'>Home</a> | <a href='/login'>Log in</a> | "
                "<a href='/signup'>Sign up</a> | "
                "<a href='/shop'>Shop</a> | "
+               "<a href='/coinshop'>Coin Shop</a> | "
                "<a href='/world'>World</a> | "
                "<a href='/village'>Village</a> | "
                "<a href='/play'>Play</a> | "
@@ -2411,6 +2453,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.notices(con, user)
             elif path == "/shop":
                 self.shop(con, user)
+            elif path == "/coinshop":
+                self.coinshop(con, user, query)
             elif path == "/purchases":
                 self.purchases_page(con, user)
             elif path == "/buy_return":
@@ -2502,6 +2546,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.do_pickup(con, user)
             elif path == "/build_buy":
                 self.do_build_buy(con, user)
+            elif path == "/coinshop_buy":
+                self.do_coinshop_buy(con, user)
             elif path == "/recolor":
                 self.do_recolor(con, user)
             elif path == "/recruit":
@@ -3176,6 +3222,9 @@ class Handler(BaseHTTPRequestHandler):
                      "<input type='hidden' name='piece' value='%s'>"
                      "<button>%s %s — %d coins</button></form> "
                      % (key, mark, name, price))
+        items = coin_items_str(con, user["id"])
+        if items:
+            body += ("<p>Your items: %s</p>" % esc(items))
         invites = con.execute(
             "SELECT COUNT(*) FROM users WHERE invited_by=?",
             (user["id"],)).fetchone()[0]
@@ -5099,6 +5148,54 @@ class Handler(BaseHTTPRequestHandler):
                     "VALUES (?, ?)", (user["id"], piece))
         con.commit()
         self.redirect("/me?msg=%s+built!" % name.replace(" ", "+"))
+
+    def coinshop(self, con, user, query):
+        body = ""
+        if query.get("msg"):
+            body += "<p class='ok'>%s</p>" % esc(query["msg"][0])
+        body += ("<h1>Coin Shop</h1><p>Spend the coins you collect in "
+                 "the Live World field \u2014 each coin you pick up there "
+                 "is worth 10 coins here.</p>")
+        if user:
+            bal = con.execute("SELECT coins FROM users WHERE id=?",
+                              (user["id"],)).fetchone()[0] or 0
+            body += ("<p>\U0001fa99 Your coins: <b>%d</b></p>" % bal)
+            items = coin_items_str(con, user["id"])
+            if items:
+                body += ("<p>Your items: %s</p>" % esc(items))
+        for key, (mark, name, price, blurb) in COIN_SHOP_ITEMS.items():
+            body += ("<div class='card'><h3>%s %s \u2014 %d coins</h3>"
+                     "<p>%s</p>" % (mark, name, price, blurb))
+            if user:
+                body += ("<form method='post' action='/coinshop_buy'>"
+                         "<input type='hidden' name='item' value='%s'>"
+                         "<button>Buy</button></form>" % key)
+            else:
+                body += ("<p><a href='/login'>Log in</a> to buy.</p>")
+            body += "</div>"
+        body += ("<p><a href='/live'>Back to the Live field</a> to "
+                 "collect more coins.</p>")
+        self.send_html(page("Coin Shop", body, user))
+
+    def do_coinshop_buy(self, con, user):
+        if self.need_login(user):
+            return
+        item = (self.form().get("item") or "").strip()
+        if item not in COIN_SHOP_ITEMS:
+            self.redirect("/coinshop?msg=Unknown+item.")
+            return
+        mark, name, price, blurb = COIN_SHOP_ITEMS[item]
+        bal = con.execute("SELECT coins FROM users WHERE id=?",
+                          (user["id"],)).fetchone()[0] or 0
+        if bal < price:
+            self.redirect("/coinshop?msg=Not+enough+coins.")
+            return
+        con.execute("UPDATE users SET coins = coins - ? WHERE id=?",
+                    (price, user["id"]))
+        con.execute("INSERT INTO player_items (user_id, item) "
+                    "VALUES (?, ?)", (user["id"], item))
+        con.commit()
+        self.redirect("/coinshop?msg=%s+bought!" % name.replace(" ", "+"))
 
     def play_state(self, con, user):
         msgs = con.execute(

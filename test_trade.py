@@ -3663,6 +3663,34 @@ def main():
             s, vpage = get(sh, "/village", base=pbase)
             check("village showcase shows built pieces",
                   "Built here:" in vpage and "🌳" in vpage)
+            post(sh, "/play_move", {"x": "75", "y": "35"}, base=pbase)
+            post(sh, "/pickup", {}, base=pbase)
+            post(sh, "/play_move", {"x": "50", "y": "80"}, base=pbase)
+            post(sh, "/pickup", {}, base=pbase)
+            post(sh, "/play_move", {"x": "85", "y": "65"}, base=pbase)
+            post(sh, "/pickup", {}, base=pbase)
+            s, shop = get(sh, "/coinshop", base=pbase)
+            check("coin shop lists villager goods with coin prices",
+                  "Cooking Pot" in shop and "Magic Wand" in shop
+                  and "Sword" in shop and "Magic Potion" in shop
+                  and "Wood Bundle" in shop and "Fishing Rod" in shop
+                  and "Shield" in shop)
+            s, poor2 = post(sh, "/coinshop_buy", {"item": "sword"},
+                            base=pbase)
+            check("coin shop refuses a buy without enough coins",
+                  "Not enough coins." in poor2)
+            s, bought = post(sh, "/coinshop_buy", {"item": "pot"},
+                             base=pbase)
+            check("coin shop buy spends coins and shows the item",
+                  "Cooking Pot bought!" in bought
+                  and "Your items:" in bought and "🍲" in bought)
+            s, anonshop = get(anon, "/coinshop", base=pbase)
+            check("logged-out coin shop shows catalog and login note",
+                  "Cooking Pot" in anonshop and "Log in" in anonshop)
+            s, unknown = post(sh, "/coinshop_buy", {"item": "nope"},
+                              base=pbase)
+            check("coin shop refuses an unknown item",
+                  "Unknown item." in unknown)
             s, dstate = get(anon, "/play_state", base=pbase)
             dplayers = {p["username"]: p
                         for p in json.loads(dstate)["players"]}
